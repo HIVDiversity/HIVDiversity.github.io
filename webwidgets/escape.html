@@ -103,7 +103,7 @@
     </div>
 
     <div id="alignment-tab" class="tab-content active">
-        <input type="file" id="file-input" accept=".fasta,.fa,.txt">
+        <input type="file" id="file-input" accept=".fasta,.fa,.txt"><br><br>
         <input type="text" id="partition-input" placeholder="Please enter space separated identifiers for partitioning the alignment">
         <input type="text" id="column-range-input" placeholder="Please enter space separated column ranges using reference coordinates (eg: 45-57 68 91-106)">
         <button onclick="parseColumnRanges()">Parse Column Ranges</button>
@@ -121,11 +121,11 @@
     
     <div id="logo-tab" class="tab-content">
          <div class="dropdown-container">
-             Select the escape time point:
+             Select a partition for the escape logo:
             <select id="stringDropdown">
                 <!-- Options will be added here dynamically -->
             </select>
-        </div>
+        </div><br>
         <button onclick="generateLogo()">Generate Escape Logo</button>
         <button onclick="downloadLogoSVG()">Download Logo SVG</button>
         <div class="slider-container">
@@ -504,6 +504,7 @@
                 option.text = item;
                 dropdown.appendChild(option);
             });
+            selectedPartition=partitions[partitions.length-1];
         }
         
         // Function to handle selection change
