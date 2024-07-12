@@ -877,11 +877,13 @@
             d3.select(container).selectAll("*").remove();
 
             const width = 800 * horizontalExtent;
-            const height = 600 * verticalExtent;
+            const height = 300 * verticalExtent;
             const margin = { top: 80, right: 30, bottom: 100, left: 100 };
             // const margin = { top: 20, right: 20, bottom: 30, left: 40 };
             const logoWidth = width - margin.left - margin.right;
-            const logoHeight = height / 2 - margin.top - margin.bottom;
+            const logoHeight = height - margin.top - margin.bottom;
+            
+            const cons_aa = Object.keys(founderMatrix[0])[0];
 
             const svg = d3.select(container)
                 .append("svg")
@@ -902,7 +904,7 @@
                     .padding(0.01);
                     
             logo.append('g')
-                .attr('transform', `translate(0,${(3/2)*logoHeight})`)
+                .attr('transform', `translate(0,${logoHeight})`)
                 .call(d3.axisBottom(x))
                 .selectAll('text')
                 .attr('transform', 'rotate(-45)')
@@ -920,47 +922,40 @@
 
             frequencyMatrix.forEach((position, index) => {
                 let y = logoHeight;
-                const sortedAAs = Object.entries(position).sort((a, b) => b[1] - a[1]);
-
+                
+                const sortedAAs = Object.entries(position).sort((a, b) => a[1] - b[1]);
+                
+                reSortedAAs=[];
+                var extra=[]
                 sortedAAs.forEach(([aa, frequency]) => {
+                    if (aa != cons_aa) {
+                        reSortedAAs.push([aa, frequency])
+                    } else {
+                        extra=[aa,frequency]
+                    }
+                });
+                if (extra.length>0){
+                    reSortedAAs.push(extra)
+                }
+
+                reSortedAAs.forEach(([aa, frequency]) => {
                     const height = logoHeight * frequency;
                     const width = xScale.bandwidth();
 
                     const letterGroup = logo.append("g")
                         .attr("transform", `translate(${xScale(index)}, ${y - height}) scale(${width / 100}, ${height / 100})`);
 
+                    var alpha = ((aa == cons_aa) ? '0.2' : '1')
                     letterGroup.append("path")
                         .attr("d", letterPaths[aa])
-                        .attr("fill", colors[aa]);
+                        .attr("fill", colors[aa])
+                        .attr("fill-opacity", alpha);
                         
                     letterGroup.append("path")
                         .attr("d", letterHoles[aa])
                         .attr("fill", holeColors[aa]);
 
                     y -= height;
-                });
-            });
-            
-            founderMatrix.forEach((position, index) => {
-                let y = (3/2) * logoHeight;
-                const sortedAAs = Object.entries(position).sort((a, b) => b[1] - a[1]);
-
-                sortedAAs.forEach(([aa, frequency]) => {
-                    const height = logoHeight * frequency;
-                    const width = xScale.bandwidth();
-
-                    const letterGroup = logo.append("g")
-                        .attr("transform", `translate(${xScale(index)}, ${y - height/2}) scale(${width / 100}, ${height / 200})`);
-
-                    letterGroup.append("path")
-                        .attr("d", letterPaths[aa])
-                        .attr("fill", colors[aa]);
-                        
-                    letterGroup.append("path")
-                        .attr("d", letterHoles[aa])
-                        .attr("fill", holeColors[aa]);
-
-                    y -= height/2;
                 });
             });
 
@@ -1010,11 +1005,13 @@
                 esf = calculateDistribution(lastPartitionSequences, col);
                 // remove the maximal bgf from esf
                 sortedBgf = Object.entries(bgf).sort((a, b) => b[1] - a[1]);
+                cons_keys = Object.keys(bgf);
+                cons_key = cons_keys[0];
+                sortedEsf = Object.entries(esf).sort((a, b) => ((a[0] == cons_key) ? 1 : b[1] - a[1]));
                 keyCount=0;
                 ff={};
                 Object.keys(bgf).forEach((key) => {
                   if ( keyCount == 0 ) {
-                      esf[key]=0.0;
                       ff[key]=1.0
                   };
                   keyCount=keyCount+1;
