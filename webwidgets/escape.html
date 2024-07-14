@@ -44,6 +44,18 @@
             padding: 10px;
             border: 1px solid #ddd;
         }
+        .hidden {
+            display: none;
+        }
+        .column {
+          float: left;
+          width: 50%;
+        }
+        .row:after {
+          content: "";
+          display: table;
+          clear: both;
+        }
         #alignment-container {
             display: flex;
             width: 100%;
@@ -60,6 +72,9 @@
         }
         #sequences-container {
             width: 78%;
+        }
+        #warnings {
+            color: red;
         }
         .name, .sequence {
             white-space: nowrap;
@@ -99,13 +114,44 @@
     <div class="tab-buttons">
         <button class="tab-button active" onclick="showTab('alignment')">Alignment</button>
         <button class="tab-button" onclick="showTab('heatmap')">Heatmap</button>
-        <button class="tab-button" onclick="showTab('epitopelogo')">Epitope Logo</button>
+        <button class="tab-button" onclick="showTab('escapelogo')">Escape Logo</button>
         <button class="tab-button" onclick="showTab('sitelogo')">Site Logo</button>
     </div>
 
     <div id="alignment-tab" class="tab-content active">
-        <input type="file" id="file-input" accept=".fasta,.fa,.txt"><br><br>
-        <input type="text" id="partition-input" placeholder="Please enter space separated identifiers for partitioning the alignment">
+        <h3>Load Alignment and Specify Partitions</h3>
+        <div class="row">
+          <div class="column">
+              <p>Upload a fasta file containing your AA alignment:</p>
+              <input type="file" id="file-input" accept=".fasta,.fa,.txt">
+          </div>
+          <div class="column"
+              <br>
+              <p>Upload a CSV file with sample info (or skip this section):</p>
+              <input type="file" id="csvFile" accept=".csv">
+            
+              <div id="columnSelection" class="hidden">
+                <h4>Select Columns</h4>
+                <label for="keyColumn">Select Sample ID Column:</label>
+                <select id="keyColumn"></select>
+                <br><br>
+                <label for="valueColumn">Select Time Since Infection Column:</label>
+                <select id="valueColumn"></select>
+                <br><br>
+                <button id="processButton">Process column selection</button>
+                <div id="results" class="hidden">
+                    <div id="warnings"></div>
+                </div>
+              </div>
+            
+          </div>
+        </div>
+        <br>
+        
+        
+
+        <input type="text" id="partitionInput" placeholder="Please enter space separated identifiers for partitioning the alignment">
+        <input type="text" id="timeInput" placeholder="Please enter space separated timing info, one for each partition">
         <input type="text" id="column-range-input" placeholder="Please enter space separated column ranges using reference coordinates (eg: 45-57 68 91-106)">
         <button onclick="parseColumnRanges()">Parse Partitions and Column Ranges</button>
         <div id="alignment-container">
@@ -120,7 +166,7 @@
         <div id="heatmap-container"></div>
     </div>
     
-    <div id="epitopelogo-tab" class="tab-content">
+    <div id="escapelogo-tab" class="tab-content">
          <div class="dropdown-container">
              Select a partition for the escape logo:
             <select id="stringDropdown">
@@ -179,6 +225,7 @@
         let selectedColumns = [];
         let fileName = "";
         let referenceSequence = '';
+        let tsiAnnotations = {};
 
         function showTab(tabName) {
             document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
@@ -192,6 +239,7 @@
             fileName = file.name.split('.').slice(0, -1).join('.');
             const reader = new FileReader();
             reader.onload = function(e) {
+                // document.getElementById('csvSection').classList.remove('hidden');
                 const content = e.target.result;
                 alignment = parseFasta(content);
                 displayAlignment();
@@ -253,15 +301,101 @@
 
             highlightColumns();
         }
+        
+        // functionality for processing names and times from csv file
+        
+        document.getElementById('csvFile').addEventListener('change', handleCsvFile);
+        document.getElementById('processButton').addEventListener('click', processData);
+        
+        function handleCsvFile(event) {
+            const file = event.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                csvData = parseCSV(e.target.result);
+                columnNames = csvData[0];
+                populateDropdowns();
+                document.getElementById('columnSelection').classList.remove('hidden');
+            };
+
+            reader.readAsText(file);
+        }
+
+        function parseCSV(content) {
+            const lines = content.trim().split('\n');
+            return lines.map(line => line.split(',').map(item => item.trim()));
+        }
+
+        function populateDropdowns() {
+            const keySelect = document.getElementById('keyColumn');
+            const valueSelect = document.getElementById('valueColumn');
+
+            columnNames.forEach((name, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = name;
+                keySelect.appendChild(option.cloneNode(true));
+                valueSelect.appendChild(option);
+            });
+        }
+
+        function processData() {
+            const keyColumnIndex = parseInt(document.getElementById('keyColumn').value);
+            const valueColumnIndex = parseInt(document.getElementById('valueColumn').value);
+            tsiAnnote=valueColumnIndex;
+            
+            const dictionary = {};
+            const warningDiv = document.getElementById('warnings');
+            warningDiv.innerHTML = '';
+            let hasWarnings = false;
+
+            for (let i = 1; i < csvData.length; i++) {
+                const key = csvData[i][keyColumnIndex];
+                const value = parseInt(csvData[i][valueColumnIndex]);
+
+                if (key in dictionary) {
+                    warningDiv.innerHTML += `Warning: Duplicate key "${key}" found on line ${i + 1}. Using the last occurrence.<br>`;
+                    hasWarnings = true;
+                }
+
+                if (isNaN(value)) {
+                    warningDiv.innerHTML += `Warning: Invalid integer value "${csvData[i][valueColumnIndex]}" for key "${key}" on line ${i + 1}. Skipping this entry.<br>`;
+                    hasWarnings = true;
+                } else {
+                    dictionary[key] = value;
+                }
+            }
+
+            if (!hasWarnings) {
+                warningDiv.innerHTML = 'No warnings. CSV file processed successfully.';
+            }
+
+            const matchingKeys = Object.keys(dictionary).filter(key =>
+                alignment.some(seq => seq.name.includes(key))
+            ).sort();
+
+            document.getElementById('partitionInput').value = matchingKeys.join(' ');
+            document.getElementById('timeInput').value = matchingKeys.map(key => dictionary[key]).join(' ');
+
+            document.getElementById('results').classList.remove('hidden');
+        }
+
 
         function parseColumnRanges() {
             // first do the partitions
-            const partitionInput = document.getElementById('partition-input').value;
+            const partitionInput = document.getElementById('partitionInput').value;
+            const timeInput = document.getElementById('timeInput').value;
             partitions = partitionInput.trim().split(/\s+/); // to sort use .sort();
+            tsiAnnotationList = timeInput.trim().split(/\s+/);
             populateDropdown();
             partitionCounts = {};
-            partitions.forEach(partition => {
+            partitions.forEach((partition, index) => {
                 partitionCounts[partition] = alignment.filter(seq => seq.name.includes(partition)).length;
+                if (index<tsiAnnotationList.length) {
+                    tsiAnnotations[partition] = tsiAnnotationList[index];
+                } else {
+                    tsiAnnotations[partition] = "?";
+                }
             });
             
             // now the column ranges
@@ -323,7 +457,7 @@
         }
 
         function generateHeatmap() {
-            const partitionInput = document.getElementById('partition-input').value;
+            const partitionInput = document.getElementById('partitionInput').value;
             partitions = partitionInput.trim().split(/\s+/); // to sort use .sort();
 
             const heatmapData = calculateJSD();
@@ -414,7 +548,7 @@
             const container = document.getElementById('heatmap-container');
             container.innerHTML = '';
 
-            const margin = { top: 80, right: 30, bottom: 100, left: 100 };  // Increased bottom margin
+            const margin = { top: 80, right: 30, bottom: 120, left: 100 };  // Increased bottom margin
             const width = 600 - margin.left - margin.right;
             const height = 1200 - margin.top - margin.bottom;
 
@@ -466,7 +600,7 @@
                 .selectAll('text')
                 .attr('transform', 'rotate(-45)')
                 .style('text-anchor', 'end')
-                .text(d => `${d} (${partitionCounts[d]})`);  // Modified to include count
+                .text(d => `${d}_#${partitionCounts[d]}_@${tsiAnnotations[d]} `);  // Modified to include seq count and tsi
 
             svg.append('g')
                 .call(d3.axisLeft(y))
@@ -878,7 +1012,7 @@
 
             const width = 800 * horizontalExtent;
             const height = 300 * verticalExtent;
-            const margin = { top: 80, right: 30, bottom: 100, left: 100 };
+            const margin = { top: 80, right: 30, bottom: 120, left: 100 };
             // const margin = { top: 20, right: 20, bottom: 30, left: 40 };
             const logoWidth = width - margin.left - margin.right;
             const logoHeight = height - margin.top - margin.bottom;
@@ -909,7 +1043,7 @@
                 .selectAll('text')
                 .attr('transform', 'rotate(-45)')
                 .style('text-anchor', 'end')
-                .text(d => `${d} (${partitionCounts[d]})`);
+                .text(d => `${d}_#${partitionCounts[d]}_@${tsiAnnotations[d]} `);
 
             const xScale = d3.scaleBand()
                 .range([0, logoWidth])
