@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alignment Clustering</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+        .grid-container {
+            display: grid;
+            grid-template-columns: 20px 1fr;
+            grid-template-rows: 20px 1fr;
+            gap: 5px;
+            height: 400px;
+            margin: 20px 0;
+        }
+        .cell {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 10px;
+            border: 1px solid #ddd;
+        }
+        .column {
+          float: left;
+          width: 50%;
+        }
+        .row:after {
+          content: "";
+          display: table;
+          clear: both;
+        }
+        #results-container {
+            display: flex;
+            gap: 20px;
+        }
+        #results-container, #alignDifference-container {
+            flex: 1;
+            white-space: pre-wrap;
+            border: 1px solid #ccc;
+            padding: 10px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        #alignDifference-container {
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Alignment Clustering</h1>
+    <h4>using <a href=https://en.wikipedia.org/wiki/DBSCAN target=blank>DBSCAN</a> on a 2D
+        <a href=https://en.wikipedia.org/wiki/Principal_component_analysis target=blank>PCA</a> projection</h4>
+
+            <input type="file" id="fileInput" accept=".fasta,.fa">
+            <div id="fastaResults"></div>
+            <button id="computeFeatures">Compute Feature Vectors</button>
+            <div id="featureResults"></div>
+            <div class="slider-container">
+                <button id="decrease-s">-</button>
+                <input type="range" id="s-slider" min="10" max="100" step="5" value="20">
+                <button id="increase-s">+</button>&nbsp;
+                s = <span id="s-value">20</span>%
+            </div>
+            <button id="subSample">Sample</button>
+            <div id="sampleResults"></div>
+    
+            <button id="computePCA">Compute PCA</button>
+            <div id="pcaResults"></div>
+    
+            <div id="slider-container">
+                <button id="decrease-mp">-</button>
+                <input type="range" id="mp-slider" min="3" max="7" value="5">
+                <button id="increase-mp">+</button>&nbsp;
+                mp = <span id="mp-value">5</span>&nbsp;
+            </div>
+            <div id="slider-container">
+                <button id="decrease-r">-</button>
+                <input type="range" id="r-slider" min="0.0" max="2.0" step="0.1" value="0.5">
+                <button id="increase-r">+</button>&nbsp;
+                r = <span id="r-value">0.5</span>&nbsp;
+            </div>
+            <button id="cluster">Cluster</button>&nbsp;
+            <div id="clusterResults"></div>
+            <button id="clusterAnnotate">Annotate and Download</button>
+            <br><br>
+            <a id="downloadLink" style="display: none;">Download Annotated FASTA</a>
+            <br><br>
+     
+            <div id="scatterplot"></div>
+            <div id="histogram"></div>
+            <br><br>
+            <div id="alignDifference-container">
+                <canvas id="alignment-canvas"></canvas>
+            </div>
+    
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://www.lactame.com/lib/ml/6.0.0/ml.min.js"></script>
+    <script src="https://hivdiversity.github.io/webwidgets/DBSCAN.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        
+        let alignment=[];
+        let reference="";
+        let referenceName="";
+        let founder="";
+        let founderName="";
+        let donerFile="";
+        let allSequences=[];
+        let allFeatures=[];
+        let subSampledFeatures=[];
+        let sBound=100;
+        let s=20;
+        let projectedFeatures=[];
+        let augmentedFeatures=[];
+        let clusters=[];
+        let rBound=2;
+        let r=0.5;
+        let mpBound=7;
+        let mp=5;
+        let alphabet="";
+        
+        // Define the list of possible amino acids
+        const aminoAcids = 'ACDEFGHIKLMNPQRSTVWY-';
+        const nucleotides = 'ACGTN-'
+        
+        // needed to display alignment
+        const aminoAcidColors = {
+            'A': '#90A0CF', 'B': '#80CF98', 'C': '#CF90B0', 'D': '#CFCF70', 'E': '#CF90CF',
+            'F': '#80C0C0', 'G': '#CFA060', 'H': '#C05070', 'I': '#C5AE83', 'J': '#00A7CF',
+            'K': '#B54C4C', 'L': '#56B592', 'M': '#8AB52A', 'N': '#BE72BE', 'O': '#00B6A1',
+            'P': '#00CF6F', 'Q': '#349B61', 'R': '#0000BB', 'S': '#A59F5B', 'T': '#009400',
+            'U': '#B00000', 'V': '#B0B000', 'W': '#B000B0', 'X': '#00B0B0', 'Y': '#E8B613',
+            'Z': '#C23232', '-': '#CFC9BB'
+        };
+        
+        const nucleotideColors = {
+            'A': '#458b00', 'C': '#6495ed', 'G': '#8b008b', 'T': '#ff7f50',
+            'N': '#BE72BE', '-': '#CFC9BB'
+        }
+        
+        let alphabetColors = {};
+
+        
+        
+        // Check if PCA is available
+        if (typeof ML === 'undefined' || typeof ML.PCA === 'undefined') {
+            console.error('ML.PCA is not defined. The ml-pca library may not have loaded correctly.');
+            return;
+        }
+       
+        console.log(ML);
+        
+
+        
+        // function to shuffle an array
+        function shuffle(array) {
+            let currentIndex = array.length;
+            // While there remain elements to shuffle...
+            while (currentIndex != 0) {
+                // Pick a remaining element...
+                let randomIndex = Math.floor(Math.random() * currentIndex);
+                currentIndex--;
+                // And swap it with the current element.
+                [array[currentIndex], array[randomIndex]] = [
+                  array[randomIndex], array[currentIndex]];
+            };
+        };
+
+        // Function to parse FASTA format
+        function parseFasta(content) {
+            const lines = content.split('\n');
+            const sequences = [];
+            alignment = [];
+            let currentSequence = '';
+            let currentName = '';
+            let count=0;
+            let alphaChars = new Set();
+            for (const line of lines) {
+                if (line.startsWith('>')) {
+                    if (currentName) {
+                        (count==0) ? reference = currentSequence : null;
+                        (count==0) ? referenceName = currentName : null;
+                        (count==1) ? founder = currentSequence : null;
+                        (count==1) ? founderName = currentName : null;
+                        if (count>1) {
+                            alignment.push({ name: currentName, sequence: currentSequence });
+                            sequences.push(currentSequence);
+                            currentSequence.split("").forEach(ch => alphaChars.add(ch))
+                        }
+                        count+=1;
+                        currentSequence = '';
+                    }
+                    currentName = line.slice(1).trim();
+                } else {
+                    currentSequence += line.trim();
+                }
+            }
+
+            if (currentName) {
+                alignment.push({ name: currentName, sequence: currentSequence });
+                sequences.push(currentSequence);
+                currentSequence.split("").forEach(ch => alphaChars.add(ch))
+            }
+            
+            let testAlphabet = alphaChars.isSubsetOf(new Set(nucleotides));
+            if (testAlphabet) {
+                alphabet=nucleotides; // .substring(0,nucleotides.length-1);
+                alphabetColors=aminoAcidColors;
+                alert(`Nucleotide alignment with reference: ${referenceName}, founder: ${founderName} and ${sequences.length} sequences `);
+            } else {
+                alphabet=aminoAcids; // .substring(0,nucleotides.length-1);
+                alphabetColors=nucleotideColors;
+                alert(`Amino Acid alignment with reference: ${referenceName}, founder: ${founderName} and ${sequences.length} sequences `)
+            }
+
+            // referenceSequence = sequences[0].sequence
+            return sequences;
+        }
+        
+        function subSampleFeatures(features,pct) {
+            let ret=features.slice(0,features.length);
+            shuffle(ret);
+            let rett=ret.slice(1,Math.floor((pct/100)*features.length));
+            // rett.push(features[0])
+            return rett
+        };
+
+       // Function to compute feature vectors
+       // function computeFeatureVectors(sequences) {
+       //     return sequences.map(seq => {
+       //         const counts = new Array(20).fill(0);
+       //         for (const aa of seq) {
+       //             const index = alphabet.indexOf(aa.toUpperCase());
+       //             if (index !== -1) counts[index]++;
+       //         }
+       //         return counts;
+       //     });
+       // }
+        
+       // function to compute one hot of an amino acid char
+       function oneHotChar(aa) {
+           onehot = new Array(alphabet.length).fill(0);
+           const index = alphabet.indexOf(aa.toUpperCase());
+           if (index !== -1) onehot[index]=1;
+           return onehot;
+       }
+        
+        // Function to compute one-hot feature vectors
+        function computeOneHot(sequences) {
+            return sequences.map(seq => {
+                let onehot = seq.split('').map(aa => {
+                    return oneHotChar(aa)
+                    });
+                return onehot.flat()
+            });
+        }
+
+       // Function to compute UMAP
+       // async function computeUMAP(featureVectors) {
+       //     fixed = new UMAP({
+       //       nComponents: 2,
+       //       minDist: 0.1,
+       //       nNeighbors: 15
+       //     }).fit(featureVectors)
+       //     return fixed;
+       // }
+        
+        // Function to compute PCA
+        async function computePCA(featureVectors) {
+            let data = featureVectors;
+            const pca = new ML.PCA(data);
+            const projectedData = pca.predict(data, { nComponents: 2 }).data;
+            projectedFeatures = pca.predict(allFeatures, { nComponents: 2 }).data;
+            return projectedData;
+        }
+        
+        // Function to compute clusters
+        async function computeClusters(projections) {
+            let data = projections;
+            var dbscan = new DBSCAN();
+            // parameters: 5 - neighborhood radius, 2 - number of points in neighborhood to form a cluster
+            var cls = dbscan.run(data, r, mp);
+            
+            clusters = new Array(data.length).fill(0);
+            for (let i=0; i<cls.length; i++) {
+                for (let j=0; j<cls[i].length; j++) {
+                    clusters[cls[i][j]] = i+1;
+                }
+            }
+
+            // have to do this to ensure noise is not in cluster.
+            for (let p=0; p<dbscan.noise.length; p++) {
+                clusters[dbscan.noise[p]] = 0;
+            }
+            
+            var clsret={'c': cls, 'n':dbscan.noise};
+            return clsret;
+        }
+        
+        function distinctColors(count) {
+            var colors = [];
+            for(hue = 0; hue < 360; hue += 360 / count) {
+                colors.push(hsvToRgb(hue, 100, 100));
+            }
+            return colors;
+        }
+        
+        var colors = [
+            // '#808080', //gray
+            '#0000FF', //blue
+            // '#FFFF00', //yellow
+            '#008000', //green
+            '#FFA500', //orange
+            '#FF0000', //red
+            '#800080', //purple
+            '#808000', //olive
+            '#00FF00', //lime
+            '#800000', //maroon
+            '#00FFFF', //aqua
+            '#008080', //team
+            '#000080', //navy
+            '#FF00FF'  //fushua
+        ];
+        
+        // Function to plot scatterplot using D3
+        function plotScatterplot(pcaResults) {
+
+            // Clear previous scatterplot
+            d3.select("#scatterplot").html("");
+
+            // Set up dimensions
+            const margin = {top: 30, right: 30, bottom: 50, left: 50};
+            const width = 600 - margin.left - margin.right;
+            const height = 400 - margin.top - margin.bottom;
+
+            // Create SVG element
+            const svg = d3.select("#scatterplot")
+                .append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", `translate(${margin.left},${margin.top})`);
+
+            // Set up scales
+            const x = d3.scaleLinear()
+                .domain(d3.extent(pcaResults, d => d[0]))
+                .range([0, width]);
+
+            const y = d3.scaleLinear()
+                .domain(d3.extent(pcaResults, d => d[1]))
+                .range([height, 0]);
+
+            // Create dots
+            svg.selectAll("circle")
+                .data(pcaResults)
+                .enter()
+                .append("circle")
+                .attr("cx", d => x(d[0]))
+                .attr("cy", d => y(d[1]))
+                .attr("r", d => 3 )
+                // ((d == pcaResults[pcaResults.length-1]) ? 10 : 3))
+                .style('fill', d => colors[d[2]] )
+                .attr('fill-opacity', 0.2)
+                // ((d == pcaResults[pcaResults.length-1]) ? colors[0] : colors[d[2]]))
+                .attr("class", "dot");
+                
+            // show where the reference lies
+            // svg.selectAll("oval")
+            //     .data([pcaResults[0]])
+            //     .enter()
+            //     .append("circle")
+            //     .attr("cx", d => x(d[0]))
+            //     .attr("cy", d => y(d[1]))
+            //     .attr("r", d => 4 )
+            //     .style('fill', d => colors[colors.length-1] )
+            //     .attr("class", "dot");
+
+            // Add x-axis
+            svg.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .call(d3.axisBottom(x));
+
+            // Add y-axis
+            svg.append("g")
+                .call(d3.axisLeft(y));
+
+            // Add x-axis label
+            svg.append("text")
+                .attr("class", "axis-label")
+                .attr("text-anchor", "middle")
+                .attr("x", width / 2)
+                .attr("y", height + margin.bottom - 10)
+                .text("PC1");
+
+            // Add y-axis label
+            svg.append("text")
+                .attr("class", "axis-label")
+                .attr("text-anchor", "middle")
+                .attr("transform", "rotate(-90)")
+                .attr("x", -height / 2)
+                .attr("y", -margin.left + 15)
+                .text("PC2");
+
+            // Add title
+            svg.append("text")
+                .attr("class", "axis-label")
+                .attr("text-anchor", "middle")
+                .attr("x", width / 2)
+                .attr("y", -margin.top / 2)
+                .text(donorFile);
+        }
+                
+        // function to display alignment according to clustering
+        
+        function displayClusters(clusters,noise) {
+                clusters.push(noise);
+                   const canvas = document.getElementById('alignment-canvas');
+                   const ctx = canvas.getContext('2d');
+                   const pixelSize = 1;
+                   const clusterSpacerHeight = 5;
+                   var width=founder.length;
+                   var noSeqs=0;
+                   var height=0;
+                   for (let i=0; i<clusters.length; i++) {
+                       height += clusterSpacerHeight;
+                       height += clusters[i].length;
+                    };
+                   height += clusterSpacerHeight;
+
+                   canvas.width = width * pixelSize;
+                   canvas.height = height * pixelSize;
+
+                   ctx.fillStyle = '#FFFFFF';
+                   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                   let currentRow = 0;
+                   for (let cl=0; cl<clusters.length; cl++) {
+                       // first display a cluster spacer
+                       ctx.fillStyle = '#000000';
+                       ctx.fillRect(0, currentRow * pixelSize, canvas.width, clusterSpacerHeight * pixelSize);
+                       currentRow += clusterSpacerHeight;
+                    
+                           clusters[cl].forEach((si) => {
+                               for (let col = 0; col < alignment[si].sequence.length; col++) {
+                                   const aa = alignment[si].sequence[col];
+                                   const caa = founder[col];
+                                   ctx.fillStyle = alphabetColors[aa] || '#FFFFFF';
+                                   if (aa==caa){
+                                       ctx.fillStyle = '#FFFFFF';
+                                   }
+                                   ctx.fillRect(col * pixelSize, currentRow * pixelSize, pixelSize, pixelSize);
+                               }
+                               currentRow++;
+                           });
+                       
+                    };
+                   // display last partition spacer
+                   ctx.fillStyle = '#000000';
+                   ctx.fillRect(0, currentRow * pixelSize, canvas.width, clusterSpacerHeight * pixelSize);
+                   currentRow += clusterSpacerHeight;
+                }
+
+        
+       // Functions to plot histograms using D3
+       
+       function plotHistogram(pcaResults, component) {
+           var pcs = [];
+        
+           for (let i=0; i<pcaResults.length; i++) {
+               pcs.push(pcaResults[i][component]);
+           }
+        
+           // Clear previous histogram
+           d3.select("#histogram").html("");
+
+           // Set up dimensions
+           const margin = {top: 30, right: 30, bottom: 50, left: 50};
+           const width = 600 - margin.left - margin.right;
+           const height = 400 - margin.top - margin.bottom;
+
+           // Create SVG element
+           const svg = d3.select("#histogram")
+               .append("svg")
+               .attr("width", width + margin.left + margin.right)
+               .attr("height", height + margin.top + margin.bottom)
+               .append("g")
+               .attr("transform", `translate(${margin.left},${margin.top})`);
+
+           // Create histogram bins
+           const histogram = d3.histogram()
+               .domain(d3.extent(pcs))
+               .thresholds(40);
+
+           const bins = histogram(pcs);
+
+           // Set up scales
+           const x = d3.scaleLinear()
+               .domain([bins[0].x0, bins[bins.length - 1].x1])
+               .range([0, width]);
+
+           const y = d3.scaleLinear()
+               .domain([0, d3.max(bins, d => d.length)])
+               .range([height, 0]);
+
+           // Create bars
+           svg.selectAll("rect")
+               .data(bins)
+               .enter()
+               .append("rect")
+               .attr("x", d => x(d.x0) + 1)
+               .attr("width", d => Math.max(0, x(d.x1) - x(d.x0) - 1))
+               .attr("y", d => y(d.length))
+               .attr("height", d => height - y(d.length))
+               .attr("class", "bar");
+
+           // Add x-axis
+           svg.append("g")
+               .attr("transform", `translate(0,${height})`)
+               .call(d3.axisBottom(x));
+
+           // Add y-axis
+           svg.append("g")
+               .call(d3.axisLeft(y));
+
+           // Add x-axis label
+           svg.append("text")
+               .attr("class", "axis-label")
+               .attr("text-anchor", "middle")
+               .attr("x", width / 2)
+               .attr("y", height + margin.bottom - 10)
+               .text(`PC${component+1} Values`);
+
+           // Add y-axis label
+           svg.append("text")
+               .attr("class", "axis-label")
+               .attr("text-anchor", "middle")
+               .attr("transform", "rotate(-90)")
+               .attr("x", -height / 2)
+               .attr("y", -margin.left + 15)
+               .text("Frequency");
+
+           // Add title
+           svg.append("text")
+               .attr("class", "axis-label")
+               .attr("text-anchor", "middle")
+               .attr("x", width / 2)
+               .attr("y", -margin.top / 2)
+               .text(`Histogram of Component PC${component+1} values`);
+       }
+       
+       function annotateAlignment(alignment) {
+           let annotated = alignment.map((seq, index) => ({
+               name: `${seq.name} CL=${clusters[index]}`,
+               sequence: seq.sequence
+            }));
+           annotated.unshift({name: founderName, sequence: founder});
+           annotated.unshift({name: referenceName, sequence: reference});
+           return(annotated);
+       }
+
+       function createFasta(alignment) {
+           return alignment.map(seq => `>${seq.name}\n${seq.sequence}`).join('\n');
+       }
+
+       function createDownloadLink(content) {
+           const blob = new Blob([content], { type: 'text/plain' });
+           const url = URL.createObjectURL(blob);
+           const downloadLink = document.getElementById('downloadLink');
+           downloadLink.href = url;
+           downloadLink.download = `${donorFile}_clustered.fasta`;
+           downloadLink.style.display = 'inline';
+           downloadLink.textContent = 'Download Annotated FASTA';
+       }
+       
+       
+ 
+       // Event listener for file input
+       document.getElementById('fileInput').addEventListener('change', (event) => {
+           const file = event.target.files[0];
+           donorFile=file['name'];
+           const reader = new FileReader();
+           reader.onload = function(e) {
+               const content = e.target.result;
+               allSequences = parseFasta(content);
+               document.getElementById('fastaResults').innerHTML = `Loaded ${allSequences.length} sequences`;
+           };
+           reader.readAsText(file);
+       });
+       
+       // Slider event listeners
+       
+       document.getElementById('s-slider').addEventListener('input', handleSSliderChange);
+       document.getElementById('decrease-s').addEventListener('click', () => changeS(-5));
+       document.getElementById('increase-s').addEventListener('click', () => changeS(5));
+
+       function handleSSliderChange(event) {
+           s = parseInt(event.target.value);
+           document.getElementById('s-value').textContent = `${s}`;
+       }
+
+       function changeS(delta) {
+           const slider = document.getElementById('s-slider');
+           const newS = Math.max(1, Math.min(sBound, parseInt(slider.value) + delta));
+           slider.value = newS;
+           handleSSliderChange({ target: slider });
+       }
+       
+       document.getElementById('r-slider').addEventListener('input', handleRSliderChange);
+       document.getElementById('decrease-r').addEventListener('click', () => changeR(-0.1));
+       document.getElementById('increase-r').addEventListener('click', () => changeR(0.1));
+
+       function handleRSliderChange(event) {
+           r = parseFloat(event.target.value);
+           document.getElementById('r-value').textContent =` ${r}`;
+       }
+
+       function changeR(delta) {
+           const slider = document.getElementById('r-slider');
+           const newR = Math.max(0.1, Math.min(rBound, parseFloat(slider.value) + delta));
+           slider.value = newR;
+           handleRSliderChange({ target: slider });
+       }
+       
+       document.getElementById('mp-slider').addEventListener('input', handleMPSliderChange);
+       document.getElementById('decrease-mp').addEventListener('click', () => changeMP(-1));
+       document.getElementById('increase-mp').addEventListener('click', () => changeMP(1));
+
+       function handleMPSliderChange(event) {
+           mp = parseInt(event.target.value);
+           document.getElementById('mp-value').textContent = ` ${mp}`;
+       }
+
+       function changeMP(delta) {
+           const slider = document.getElementById('mp-slider');
+           const newMP = Math.max(1, Math.min(mpBound, parseInt(slider.value) + delta));
+           slider.value = newMP;
+           handleMPSliderChange({ target: slider });
+       }
+       
+       // Event listener for compute features button
+       document.getElementById('computeFeatures').addEventListener('click', () => {
+           if (allSequences.length==0) {
+               alert('Please upload a FASTA file first');
+               return;
+           }
+           allFeatures = computeOneHot(allSequences);
+           document.getElementById('featureResults').innerHTML = `Computed feature vectors for ${allFeatures.length} sequences`;
+       });
+
+       
+       // Add event listeners for subSample slider
+       document.getElementById('s-slider').addEventListener('input', function() {
+           document.getElementById('s-value').textContent = this.value;
+       });
+       
+       // Event listener for compute subsample button
+       document.getElementById('subSample').addEventListener('click', () => {
+           if (allFeatures.length==0) {
+               alert('Please upload a FASTA file and compute feature vectors first');
+               return;
+           }
+           ssp = document.getElementById('s-value').textContent;
+           subSampledFeatures = subSampleFeatures(allFeatures,ssp);
+           document.getElementById('sampleResults').innerHTML = `Sampled ${subSampledFeatures.length} features`;
+       });
+
+      
+       // Event listener for compute PCA button
+       document.getElementById('computePCA').addEventListener('click', async () => {
+           if (subSampledFeatures.length == 0) {
+               alert('Please compute and subSample feature vectors first');
+               return;
+           }
+           let proceed = confirm(`You are about to compute a PCA on ${subSampledFeatures.length} features, do you want to continue? `);
+           if (proceed) {
+               const pcaResults = await computePCA(subSampledFeatures);
+               augmentedFeatures = [];
+               for (let i=0; i<projectedFeatures.length; i++) {
+                   let v=[];
+                   v.push(projectedFeatures[i][0]);
+                   v.push(projectedFeatures[i][1]);
+                   v.push(1);
+                   augmentedFeatures.push(v);
+               }
+               plotScatterplot(augmentedFeatures);
+               document.getElementById('pcaResults').innerHTML = `PCA computed on sample of size ${subSampledFeatures.length} and projections of all features plotted`;
+           } else {
+               alert("PCA aborted, please press ok");
+           }
+       });
+       
+       // ans = kmeans(data, 2, { initialization: centers });
+       
+       // Event listener for cluster button
+       document.getElementById('cluster').addEventListener('click', async () => {
+           if (projectedFeatures.length == 0) {
+               alert('Please run PCA first!');
+               return;
+           }
+           let proceed = true;
+           // confirm(`You are about to perform clustering on ${projectedFeatures.length} projections, do you want to continue? `);
+           if (proceed) {
+               const results = await computeClusters(projectedFeatures);
+               
+               augmentedFeatures = [];
+               for (let i=0; i<projectedFeatures.length; i++) {
+                   let v=[];
+                   v.push(projectedFeatures[i][0]);
+                   v.push(projectedFeatures[i][1]);
+                   v.push(clusters[i]);
+                   augmentedFeatures.push(v);
+               }
+               plotScatterplot(augmentedFeatures);
+               let noiseCount = results['n'].length;
+               // let noiseCount = projectedFeatures.length -
+               //  results['c'].map( v => v.length ).reduce((a, b) => a + b, 0);
+               document.getElementById('clusterResults').innerHTML = `${results['c'].length} clusters, each of lengths ${results['c'].map( v => v.length )}, with ${noiseCount} noise points, computed on ${projectedFeatures.length} projections.`;
+               displayClusters(results['c'],results['n']);
+           } else {
+               alert("clustering aborted, please press ok");
+           }
+       });
+       
+       document.getElementById('clusterAnnotate').addEventListener('click',
+                                                                   async () => {
+           const annotatedAlignment = annotateAlignment(alignment);
+           const newFastaContent = createFasta(annotatedAlignment);
+           createDownloadLink(newFastaContent);
+        });
+           
+    });
+       
+    </script>
+</body>
+</html>

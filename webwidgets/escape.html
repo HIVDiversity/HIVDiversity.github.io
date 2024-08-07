@@ -107,6 +107,31 @@
         #logo-container {
             margin-top: 20px;
         }
+        #slider-container {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        #r-slider {
+            flex-grow: 1;
+            margin: 0 10px;
+        }
+        #results-container {
+            display: flex;
+            gap: 20px;
+        }
+        #results-container, #network-container, #alignDifference-container {
+            flex: 1;
+            white-space: pre-wrap;
+            border: 1px solid #ccc;
+            padding: 10px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        #alignDifference-container {
+            overflow-x: auto;
+        }
+ 
     </style>
 </head>
 <body>
@@ -116,6 +141,7 @@
         <button class="tab-button" onclick="showTab('heatmap')">Heatmap</button>
         <button class="tab-button" onclick="showTab('escapelogo')">Escape Logo</button>
         <button class="tab-button" onclick="showTab('sitelogo')">Site Logo</button>
+        <button class="tab-button" onclick="showTab('cluster')">Cluster Map</button>
     </div>
 
     <div id="alignment-tab" class="tab-content active">
@@ -125,8 +151,7 @@
               <p>Upload a fasta file containing your AA alignment:</p>
               <input type="file" id="file-input" accept=".fasta,.fa,.txt">
           </div>
-          <div class="column"
-              <br>
+          <div class="column">
               <p>Upload a CSV file with sample info<br>(or skip this section):</p>
               <input type="file" id="sampleFile" accept=".csv">
             
@@ -144,8 +169,7 @@
                 </div>
               </div>
           </div>
-          <div class="column"
-              <br>
+          <div class="column">
               <p>Upload a CSV file with epitope co-ords<br>(or skip this section):</p>
               <input type="file" id="epitopeFile" accept=".csv">
               <div id="epitopeSelection" class="hidden">
@@ -224,13 +248,39 @@
             <span id="verticalExtentSiteLogoValue">1</span>
         </div><br><br>
         <div id="site-logo-container"></div><br>
-        
-        
-        
+    </div>
+    
+    <div id="cluster-tab" class="tab-content">
+        <h2>consensus clustering within partitions:</h2>
+        <h4>choose cluster radius for initial clusters</h4>
+        <div id="slider-container">
+            <button onclick="runClustering()">Generate Cluster Map</button>&nbsp;
+            <button id="decrease-r">-</button>
+            <input type="range" id="r-slider" min="1" max="200" value="100">
+            <button id="increase-r">+</button>&nbsp;
+            <span id="r-value">r = 100</span>&nbsp;
+            <button onclick="runClustering()">reset</button>&nbsp;
+        </div>
+        <div id="results-container">
+            <div id="results-container">
+                <div id="cluster-results"></div>
+            </div>
+            <div id="network-container">
+                <svg id="network" width="100%" height="100%" viewBox="0 0 {{defaultWidth}} {{defaultHeight}}">
+                </svg>
+            </div>
+            <div id="alignDifference-container">
+                <canvas id="alignment-canvas"></canvas>
+            </div>
+        </div>
     </div>
 
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script>
+        
+        // UMAP = ƒ(params)
+        // UMAP = import("https://cdn.skypack.dev/umap-js@1.3.3").then((d) => d.UMAP)
+
         let alignment = [];
         let partitions = [];
         let partitionCounts = {};
@@ -787,7 +837,7 @@
             generateLogo();
         }
         
-        const colors = {
+        const aminoAcidColors = {
             'A': '#90A0CF', 'B': '#80CF98', 'C': '#CF90B0', 'D': '#CFCF70', 'E': '#CF90CF',
             'F': '#80C0C0', 'G': '#CFA060', 'H': '#C05070', 'I': '#C5AE83', 'J': '#00A7CF',
             'K': '#B54C4C', 'L': '#56B592', 'M': '#8AB52A', 'N': '#BE72BE', 'O': '#00B6A1',
@@ -904,7 +954,7 @@
 
                     letterGroup.append("path")
                         .attr("d", letterPaths[aa])
-                        .attr("fill", colors[aa]);
+                        .attr("fill", aminoAcidColors[aa]);
                         
                     letterGroup.append("path")
                         .attr("d", letterHoles[aa])
@@ -927,7 +977,7 @@
 
                     letterGroup.append("path")
                         .attr("d", letterPaths[aa])
-                        .attr("fill", colors[aa]);
+                        .attr("fill", aminoAcidColors[aa]);
                         
                     letterGroup.append("path")
                         .attr("d", letterHoles[aa])
@@ -1212,7 +1262,7 @@
                     var alpha = ((aa == cons_aa) ? '0.2' : '1')
                     letterGroup.append("path")
                         .attr("d", letterPaths[aa])
-                        .attr("fill", colors[aa])
+                        .attr("fill", aminoAcidColors[aa])
                         .attr("fill-opacity", alpha);
                         
                     letterGroup.append("path")
@@ -1318,6 +1368,375 @@
             generateSiteLogo();
         });
         
+        // now for the clustering functionallity
+        
+        let sequences=[];
+        // let clusters=[];
+        let partitionClusters={};
+        let consensus="";
+        let r = 100;
+        let k = 1;
+        let rBound = 200;
+
+        document.getElementById('r-slider').addEventListener('input', handleSliderChange);
+        document.getElementById('decrease-r').addEventListener('click', () => changeR(-1));
+        document.getElementById('increase-r').addEventListener('click', () => changeR(1));
+
+        function handleSliderChange(event) {
+            r = parseInt(event.target.value);
+            document.getElementById('r-value').textContent = `r = ${r}`;
+            runClustering();
+        }
+
+        function changeR(delta) {
+            const slider = document.getElementById('r-slider');
+            const newR = Math.max(1, Math.min(rBound, parseInt(slider.value) + delta));
+            slider.value = newR;
+            handleSliderChange({ target: slider });
+        }
+        
+        function runClustering() {
+            const slider = document.getElementById('r-slider');
+            r = Math.max(1, Math.min(rBound, parseInt(slider.value) ));
+            console.log(r);
+            if (alignment.length==0) {
+                const resultsDiv = document.getElementById('cluster-results');
+                resultsDiv.textContent = "No fasta alignment file loaded yet \n return to alignment tab!";
+                return;
+            }
+            partitionClusters={};
+            partitionClusters = kMeansClustering(r);
+            displayResults(partitionClusters);
+            displayClusters(partitionClusters);
+        }
+        
+        function shuffleArray(array){
+            for (var i = array.length - 1; i > 0; i--) {
+                var rand = Math.floor(Math.random() * (i + 1));
+                [array[i], array[rand]] = [array[rand], array[i]]
+            }
+        }
+        
+        
+        function kMeansClustering(r) {
+            console.log(`r=${r}`);
+            const m = alignment.length;
+            console.log(`m=${m}`);
+            partitionClusters={}
+            partitions.forEach((partition, index) => {
+                sequences = alignment.filter(seq => seq.name.includes(partition));
+                let n = sequences.length;
+                consensus=calculateCentroid(sequences)
+                let clusters=[[sequences[0]]];
+                let k=1;
+                clusters=[[sequences[0]]];
+                let centroids=clusters.map(calculateCentroid);
+                var i=1;
+                while (i<n) {
+                    let nearestCentroidIndex=findNearestCentroid(sequences[i].sequence, centroids);
+                    if (hammingDistance(centroids[nearestCentroidIndex], sequences[i].sequence)<r) {
+                        clusters[nearestCentroidIndex].push(sequences[i]);
+                    } else {
+                        clusters.push([sequences[i]]);
+                    }
+                    centroids=clusters.map(calculateCentroid);
+                    i=i+1;
+                }
+                k=clusters.length;
+                console.log(`no of clusters before iterating = ${k}`)
+            
+                let stable = false;
+                let iterCount = 0;
+                while (!stable) {
+                    const centroids = clusters.map(calculateCentroid);
+                    const newClusters = Array.from({ length: k }, () => []);
+
+                    for (const seq of sequences) {
+                        const nearestCentroidIndex = findNearestCentroid(seq.sequence, centroids);
+                        newClusters[nearestCentroidIndex].push(seq);
+                    }
+                
+                    // remove clusters with zero elements
+                    const nonZeroClusters=[];
+                    for(var i=0; i<newClusters.length;i++ ) {
+                        if(newClusters[i].length!=0) {
+                            nonZeroClusters.push(newClusters[i]);
+                        }
+                    }
+
+                    stable = arraysEqual(clusters, nonZeroClusters);
+                    clusters = nonZeroClusters;
+                    iterCount += 1;
+                }
+                console.log(`no of clusters after iterating = ${k}`)
+                console.log(`no of iterations = ${iterCount}`);
+            
+                partitionClusters[partition]=clusters;
+            });
+            
+            return partitionClusters;
+        }
+
+        function calculateCentroid(cluster) {
+            const length = cluster[0].sequence.length;
+            const counts = Array.from({ length }, () => ({}));
+
+            for (const seq of cluster) {
+                for (let i = 0; i < length; i++) {
+                    const aa = seq.sequence[i];
+                    counts[i][aa] = (counts[i][aa] || 0) + 1;
+                }
+            }
+
+            return counts.map(positionCounts => {
+                const maxCount = Math.max(...Object.values(positionCounts));
+                return Object.keys(positionCounts).find(aa => positionCounts[aa] === maxCount);
+            }).join('');
+        }
+
+        function findNearestCentroid(sequence, centroids) {
+            return centroids.reduce((nearest, centroid, index) => {
+                const distance = hammingDistance(sequence, centroid);
+                return distance < nearest.distance ? { index, distance } : nearest;
+            }, { index: -1, distance: Infinity }).index;
+        }
+
+        function hammingDistance(seq1, seq2) {
+            let distance = 0;
+            for (let i = 0; i < seq1.length; i++) {
+                if (seq1[i] !== seq2[i]) distance++;
+            }
+            return distance;
+        }
+
+        function arraysEqual(arr1, arr2) {
+            if (arr1.length !== arr2.length) return false;
+            for (let i = 0; i < arr1.length; i++) {
+                if (arr1[i].length !== arr2[i].length) return false;
+                for (let j = 0; j < arr1[i].length; j++) {
+                    if (arr1[i][j] !== arr2[i][j]) return false;
+                }
+            }
+            return true;
+        }
+        
+        function findNearestNode(sourceNode, nodes) {
+            return nodes.reduce((nearest, node, index) => {
+                const distance = hammingDistance(sourceNode.centroid, node.centroid);
+                return distance < nearest.distance ? { index, distance } : nearest;
+            }, { index: -1, distance: Infinity });
+        }
+
+        function displayResults(partitionClusters) {
+            const resultsDiv = document.getElementById('cluster-results');
+            let output = `Clustering Results \n\n`;
+            let nodes=[];
+            let edges=[];
+
+            // partitionClusters.forEach((clusters, pIndex) => {
+            var part=0;
+            var ind=0;
+            firstPartition=alignment.filter(seq => seq.name.includes(partitions[0]));
+            consensus=calculateCentroid(firstPartition);
+            nodes.push({id: ind, part: part, cluster: 0, size: firstPartition.length, centroid: consensus });
+            part += 1;
+            ind += 1;
+            for (var partition in partitionClusters) {
+                var clusters = partitionClusters[partition];
+                output += `\nPartition ${partition}\n`;
+                clusters.forEach((cluster, index) => {
+                    output += `Cluster ${index + 1}: ${cluster.length} sequences\n`;
+                    node={id: ind, part: part, cluster: index, size: cluster.length, centroid: calculateCentroid(cluster) };
+                    nearest = findNearestNode(node,nodes);
+                    edge={source: ind, target: nearest.index, distance: nearest.distance };
+                    edges.push(edge);
+                    nodes.push(node);
+                    ind += 1;
+                });
+                part += 1;
+            };
+            
+            nodes = nodes.sort(({size:aa}, {size:bb}) => (bb)-(aa));
+            nodes = nodes.sort(({part:aa}, {part:bb}) => (aa)-(bb));
+            
+            //re-assign cluster indices
+            let currCluster=-1
+            let currPart=0
+            for (let i=0; i<nodes.length; i++) {
+                if (nodes[i].part != currPart) {
+                    currPart=nodes[i].part;
+                    currCluster=0;
+                } else {
+                    currCluster += 1;
+                }
+                nodes[i].cluster=currCluster;
+            }
+            
+            resultsDiv.textContent = output;
+            drawNetwork(nodes,edges);
+        }
+        
+        function displayClusters(partitionClusters) {
+                   const canvas = document.getElementById('alignment-canvas');
+                   const ctx = canvas.getContext('2d');
+                   const pixelSize = 1;
+                   const clusterSpacerHeight = 5;
+                   const partitionSpacerHeight = 10;
+                   consensus=calculateCentroid(alignment.filter(seq => seq.name.includes(partitions[0])));
+                   var width=consensus.length;
+                   console.log(`width = ${width}`);
+                   var noSeqs=0;
+                   var height=0;
+                   for (var partition in partitionClusters) {
+                       height += partitionSpacerHeight;
+                       clusters=partitionClusters[partition];
+                       clusters.forEach((cluster, index) => {
+                           height += cluster.length;
+                           height += clusterSpacerHeight;
+                       });
+                    };
+                   height += partitionSpacerHeight;
+                   console.log(`height = ${height}`);
+
+                   canvas.width = width * pixelSize;
+                   canvas.height = height * pixelSize;
+
+                   ctx.fillStyle = '#FFFFFF';
+                   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                   let currentRow = 0;
+                   for (var partition in partitionClusters) {
+                       // first display a partition spacer
+                       ctx.fillStyle = '#000000';
+                       ctx.fillRect(0, currentRow * pixelSize, canvas.width, partitionSpacerHeight * pixelSize);
+                       currentRow += partitionSpacerHeight;
+                    
+                       var clusters = partitionClusters[partition];
+                       clusters.forEach((cluster, clusterIndex) => {
+                           cluster.forEach((seq) => {
+                               for (let col = 0; col < seq.sequence.length; col++) {
+                                   const aa = seq.sequence[col];
+                                   const caa = consensus[col];
+                                   ctx.fillStyle = aminoAcidColors[aa] || '#FFFFFF';
+                                   if (aa==caa){
+                                       ctx.fillStyle = '#FFFFFF';
+                                   }
+                                   ctx.fillRect(col * pixelSize, currentRow * pixelSize, pixelSize, pixelSize);
+                               }
+                               currentRow++;
+                           });
+
+                           // Add spacer line after each cluster (except the last one)
+                           if (clusterIndex < clusters.length - 1) {
+                               ctx.fillStyle = '#BBBBBB';
+                               ctx.fillRect(0, currentRow * pixelSize, canvas.width, clusterSpacerHeight * pixelSize);
+                               currentRow += clusterSpacerHeight;
+                           }
+                       });
+                       
+                    };
+                   // display last partition spacer
+                   ctx.fillStyle = '#000000';
+                   ctx.fillRect(0, currentRow * pixelSize, canvas.width, partitionSpacerHeight * pixelSize);
+                   currentRow += partitionSpacerHeight;
+                }
+        
+        function drawNetwork(nodes, edges) {
+            const color = d3.scaleOrdinal(d3.schemeCategory10);
+            const container=d3.select('#network-container');
+            
+            var width = container.node().clientWidth;
+            var height = container.node().clientHeight;
+
+            const svg = d3.select('#network');
+            svg.selectAll('*').remove();
+            
+            var n=partitions.length+2;
+            var dy=height/n;
+            console.log(`dy = ${dy}`);
+            
+            var maxClusterSize = 1;
+            for( let i=0; i<partitions.length; i++) {
+                mc = nodes.filter(node => node.part == i).length;
+                if (mc > maxClusterSize) {
+                    maxClusterSize = mc;
+                }
+            };
+            var dx=width/(maxClusterSize+2)
+            console.log(`dx = ${dx}`);
+
+            nodes.forEach( (node) => { node.fy = (1+node.part) * dy + node.cluster*(dx/10)*(-1)**(node.cluster);
+                                       node.fx = (1+node.cluster) * dx;
+            } );
+            
+
+            simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(edges).id(d => d.id).distance(d => d.distance * 1))
+                .force('charge', d3.forceManyBody().strength(-1))
+                .force('center', d3.forceCenter(width / 2, height / 2));
+
+            const link = svg.append('g')
+                .selectAll('line')
+                .data(edges)
+                .enter().append('line')
+                .attr('stroke', '#999')
+                .attr('stroke-opacity', 0.6);
+
+            const node = svg.append('g')
+                .selectAll('circle')
+                .data(nodes)
+                .enter().append('circle')
+                .attr('r', d => Math.sqrt(9+d.size) * 1)
+                .attr("fill", d => color(d.part))
+                //.attr('fill', '#69b3a2')
+                .call(d3.drag()
+                    .on('start', dragstarted)
+                    .on('drag', dragged)
+                    .on('end', dragended));
+
+            node.append('title')
+                .text(d => d.name);
+
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node
+                    .attr('cx', d => d.x)
+                    .attr('cy', d => d.y);
+            });
+
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                // d.fx = (1+d.cluster) * dx;
+                // d.fy = (1+d.part) * dy;
+            }
+        }
+
+        function updateNetworkScale() {
+            const scale = parseFloat(document.getElementById('scaleSlider').value);
+            document.getElementById('scaleValue').textContent = scale.toFixed(1);
+
+            if (simulation) {
+                simulation.force('link').distance(d => d.distance * 10 * scale);
+                simulation.alpha(1).restart();
+            }
+        }
+
 
 
     </script>
