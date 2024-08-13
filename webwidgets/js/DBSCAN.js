@@ -15,6 +15,7 @@
  * @param {function} distanceFunction
  * @returns {DBSCAN}
  */
+
 function DBSCAN(dataset, epsilon, minPts, distanceFunction) {
   /** @type {Array} */
   this.dataset = [];

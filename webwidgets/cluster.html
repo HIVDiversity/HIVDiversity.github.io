@@ -25,16 +25,7 @@
             padding: 10px;
             border: 1px solid #ddd;
         }
-        .column {
-          float: left;
-          width: 50%;
-        }
-        .row:after {
-          content: "";
-          display: table;
-          clear: both;
-        }
-        #results-container {
+       #results-container {
             display: flex;
             gap: 20px;
         }
@@ -56,8 +47,12 @@
     <h4>using <a href=https://en.wikipedia.org/wiki/DBSCAN target=blank>DBSCAN</a> on a 2D
         <a href=https://en.wikipedia.org/wiki/Principal_component_analysis target=blank>PCA</a> projection</h4>
 
-            <input type="file" id="fileInput" accept=".fasta,.fa">
+            Load alignment in fasta format:<input type="file" id="fileInput" accept=".fasta,.fa">
+                </input>
             <div id="fastaResults"></div>
+            Load tree in newick format: <input type="file" id="treeFileInput" accept=".tree,.newick">
+                </input>
+            <div id="treeFileResults"></div>
             <button id="computeFeatures">Compute Feature Vectors</button>
             <div id="featureResults"></div>
             <div class="slider-container">
@@ -94,13 +89,20 @@
             <div id="scatterplot"></div>
             <div id="histogram"></div>
             <br><br>
-            <div id="alignDifference-container">
-                <canvas id="alignment-canvas"></canvas>
-            </div>
+            <canvas id="alignment-canvas"></canvas>
+            <br><br>
+            <div id="circle-canvas"></div>
+            <br><br>
+            <div id="tree-canvas"></div>
+            <br>
+            
     
+    <script type="text/javascript" src="https://hivdiversity.github.io/webwidgets/js/raphael.js" ></script>
+    <script type="text/javascript" src="https://hivdiversity.github.io/webwidgets/js/jsphylosvg.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://www.lactame.com/lib/ml/6.0.0/ml.min.js"></script>
-    <script src="https://hivdiversity.github.io/webwidgets/DBSCAN.js"></script>
+    <script src="https://hivdiversity.github.io/webwidgets/js/DBSCAN.js"></script>
+    
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         
@@ -110,6 +112,8 @@
         let founder="";
         let founderName="";
         let donerFile="";
+        let treeFile="";
+        let treeData="";
         let allSequences=[];
         let allFeatures=[];
         let subSampledFeatures=[];
@@ -118,11 +122,14 @@
         let projectedFeatures=[];
         let augmentedFeatures=[];
         let clusters=[];
+        let clusterDict = {};
+        let clusterColors=[];
         let rBound=2;
         let r=0.5;
         let mpBound=7;
         let mp=5;
         let alphabet="";
+        let phyloCanvas=new Object();
         
         // Define the list of possible amino acids
         const aminoAcids = 'ACDEFGHIKLMNPQRSTVWY-';
@@ -153,9 +160,10 @@
             return;
         }
        
-        console.log(ML);
-        
-
+        console.log(ML);       // for PCR
+        console.log(DBSCAN);   // Density Based Clustering
+        console.log(Raphael);
+        console.log(Smits);    // for drawing tree
         
         // function to shuffle an array
         function shuffle(array) {
@@ -249,10 +257,23 @@
            if (index !== -1) onehot[index]=1;
            return onehot;
        }
+       
+       // Function to degap one sequence wrt founder
+       function degapSeq(s,f) {
+           var sv = s.split('').map( (ch, index) => {
+               return ( (ch == '-') ? f[index] : ch) ;
+           });
+           return sv.join("");
+       }
+       
         
         // Function to compute one-hot feature vectors
         function computeOneHot(sequences) {
-            return sequences.map(seq => {
+            var degappedSequences =
+                sequences.map(seq => {
+                    return degapSeq(seq,founder)
+                });
+            return degappedSequences.map(seq => {
                 let onehot = seq.split('').map(aa => {
                     return oneHotChar(aa)
                     });
@@ -296,7 +317,15 @@
             // have to do this to ensure noise is not in cluster.
             for (let p=0; p<dbscan.noise.length; p++) {
                 clusters[dbscan.noise[p]] = 0;
-            }
+            };
+            
+            clusterDict = {}
+            for (let i=0; i<clusters.length; i++) {
+                clusterDict[alignment[i].name]=clusters[i];
+            };
+            
+            var waited = await(Smits.Common.clusterDict=clusterDict);
+            console.log(waited)
             
             var clsret={'c': cls, 'n':dbscan.noise};
             return clsret;
@@ -310,10 +339,9 @@
             return colors;
         }
         
-        var colors = [
+        clusterColors = [
             // '#808080', //gray
             '#0000FF', //blue
-            // '#FFFF00', //yellow
             '#008000', //green
             '#FFA500', //orange
             '#FF0000', //red
@@ -327,9 +355,11 @@
             '#FF00FF'  //fushua
         ];
         
+        Smits.Common.clusterColors = clusterColors;
+        
         // Function to plot scatterplot using D3
         function plotScatterplot(pcaResults) {
-
+            
             // Clear previous scatterplot
             d3.select("#scatterplot").html("");
 
@@ -364,9 +394,9 @@
                 .attr("cy", d => y(d[1]))
                 .attr("r", d => 3 )
                 // ((d == pcaResults[pcaResults.length-1]) ? 10 : 3))
-                .style('fill', d => colors[d[2]] )
+                .style('fill', d => clusterColors[d[2]] )
                 .attr('fill-opacity', 0.2)
-                // ((d == pcaResults[pcaResults.length-1]) ? colors[0] : colors[d[2]]))
+                // ((d == pcaResults[pcaResults.length-1]) ? clusterColors[0] : clusterColors[d[2]]))
                 .attr("class", "dot");
                 
             // show where the reference lies
@@ -377,7 +407,7 @@
             //     .attr("cx", d => x(d[0]))
             //     .attr("cy", d => y(d[1]))
             //     .attr("r", d => 4 )
-            //     .style('fill', d => colors[colors.length-1] )
+            //     .style('fill', d => clusterColors[clusterColors.length-1] )
             //     .attr("class", "dot");
 
             // Add x-axis
@@ -577,7 +607,36 @@
            downloadLink.textContent = 'Download Annotated FASTA';
        }
        
+       function treePlot() {
+           var dataObject = { newick: '(((Espresso:2,(Milk Foam:2,Espresso Macchiato:5,((Steamed Milk:2,Cappuccino:2,(Whipped Cream:1,Chocolate Syrup:1,Cafe Mocha:3):5):5,Flat White:2):5):5):1,Coffee arabica:0.1,(Columbian:1.5,((Medium Roast:1,Viennese Roast:3,American Roast:5,Instant Coffee:9):2,Heavy Roast:0.1,French Roast:0.2,European Roast:1):5,Brazilian:0.1):1):1,Americano:10,Water:1);' };
+           dataObject = { newick: treeData };
+           document.getElementById('circle-canvas').innerHTML="";
+           phyloCanvas = new Smits.PhyloCanvas(
+                dataObject,
+                'circle-canvas',
+                1000, 1000,
+                'circular'
+            );
+            document.getElementById('tree-canvas').innerHTML="";
+            phyloCanvas = new Smits.PhyloCanvas(
+                 dataObject,
+                 'tree-canvas',
+                 1400, 12 * alignment.length
+             );
+        }
        
+       // Event listener for file input
+       document.getElementById('treeFileInput').addEventListener('change', (event) => {
+           const file = event.target.files[0];
+           treeFile=file['name'];
+           const reader = new FileReader();
+           reader.onload = function(e) {
+               const content = e.target.result;
+               treeData = content;
+               document.getElementById('treeFileResults').innerHTML = `Loaded newick tree from ${treeFile}`;
+           };
+           reader.readAsText(file);
+       });
  
        // Event listener for file input
        document.getElementById('fileInput').addEventListener('change', (event) => {
@@ -721,6 +780,7 @@
                //  results['c'].map( v => v.length ).reduce((a, b) => a + b, 0);
                document.getElementById('clusterResults').innerHTML = `${results['c'].length} clusters, each of lengths ${results['c'].map( v => v.length )}, with ${noiseCount} noise points, computed on ${projectedFeatures.length} projections.`;
                displayClusters(results['c'],results['n']);
+               treePlot();
            } else {
                alert("clustering aborted, please press ok");
            }
