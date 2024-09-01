@@ -1974,7 +1974,7 @@
     _node = _node.data;
 
     if (isLeafNode(_node)) {
-      return _node.name || "";
+      return _node.name + _node.annotation || "";
     }
 
     if (this.showInternalName(_node)) {

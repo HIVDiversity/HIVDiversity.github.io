@@ -38,6 +38,25 @@
             margin: 0;
             padding: 20px;
         }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 300px;
+            text-align: center;
+        }
         .grid-container {
             display: grid;
             grid-template-columns: 20px 1fr;
@@ -368,7 +387,7 @@
         <div class="dropdown-menu" id="d3_layout_phylotree_context_menu">
        
       </div>
-
+        <div id="result"></div>
       <div class="row">
         <div class="col-md-12">
             <!--- <svg id="tree_container" width="800" height="1600" style="display: none;"></svg>--->
@@ -382,6 +401,13 @@
     <br><br>
     <a id="downloadLink" style="display: none;">Download Annotated FASTA</a>
     <br><br>
+    
+    <div id="dropdownModal" class="modal">
+        <div class="modal-content">
+            <h3>Select an Item</h3>
+            <select id="itemList"></select>
+        </div>
+    </div>
 
 
     <!--
@@ -412,6 +438,10 @@
         let clusters=[];
         let clusterDict = {};
         let clusterColors=[];
+        let manualClusterAssignment=0;
+        let maxLineages=9;
+        let lineageDict = {};
+        let toBeReassigned = [];
         let visitNames = [];
         let rBound=2;
         let r=0.5;
@@ -663,6 +693,11 @@
             '#000080', //navy
             '#FF00FF'  //fushua
         ];
+        
+        lineageDict[0]="HR";
+        for (let i=1; i<=maxLineages; i++) {
+            lineageDict[i]=`MxL${i}`;
+        }
         
          
         // Function to plot scatterplot using D3
@@ -917,7 +952,13 @@
        }
        
        function annotateAlignment(alignment) {
-           var max_cluster=Math.max( ...clusters );
+           // var max_cluster=Math.max( ...clusters );
+           let max_cluster = 0;
+           for(const [key, value] of Object.entries(clusterDict)) {
+             if(value > max_cluster) {
+               max_cluster = value;
+             }
+           }
            let annotated = alignment.map((seq, index) => ({
                name: `${annotateName(seq.name,clusterDict[seq.name],max_cluster)}`,
                sequence: seq.sequence
@@ -954,6 +995,16 @@
        tree_attributes={};
        maximum_node_name_length=0
        
+       function setLineageLabels(tree) {
+           tips = tree.getTips();
+           for (let ii=0; ii<tips.length; ii++) {
+               if (clusterDict[tips[ii].data["name"]]>=0) {
+                   tips[ii].data["annotation"] = "_" +
+                        lineageDict[clusterDict[tips[ii].data["name"]]];
+               }
+           }
+       }
+       
        function treePlot() {
            tree = new phylotree.phylotree(treeData);
            
@@ -963,6 +1014,8 @@
            for (let v=0; v<visitNames.length; v++)  {
                treeTitle += `_${visitNames[v]}`;
            }
+           
+           setLineageLabels(tree);
                        
            tree.render({
              container: "#tree_container",
@@ -977,6 +1030,7 @@
              "show-scale": false,
              "edge-styler": edge_colorizer      // "zoom": true,
            })
+          
            
            d3.select("tree_container").attr("fill", "none");
            
@@ -1214,6 +1268,8 @@
            createDownloadLink(newFastaContent);
         });
        
+      
+       
      //  var phylotree_extensions = new Object();
 
       $("#newick_export_modal").on("show.bs.modal", function(e) {
@@ -1417,8 +1473,71 @@
         });
       });
       
-      $("#process_selected").on("click", function(e) {
-        var toBeReassigned = [];
+      function populateDropdown() {
+          var possibles = new Set();
+          for ( var k in clusterDict ) {
+              possibles.add(clusterDict[k])
+          }
+          var pa = [...possibles].sort();
+          var max_pa = pa[pa.length-1] + 1;
+          var items=['abort', 'HR' ]
+          for (let i=1; i <= max_pa; i++) {
+              items.push(`MxL${i}`);
+          }
+          const select = document.getElementById('itemList');
+          
+          // Clear existing options
+          select.innerHTML = '';
+          
+          // Add a default option
+          const defaultOption = document.createElement('option');
+          defaultOption.text = 'Select an item';
+          defaultOption.value = '';
+          select.add(defaultOption);
+          
+          // Add items to the dropdown
+          items.forEach(item => {
+              const option = document.createElement('option');
+              option.text = item;
+              option.value = item.toLowerCase();
+              select.add(option);
+          });
+          
+      }
+      
+      // Function to handle selection change
+      async function handleSelection() {
+          const select = document.getElementById('itemList');
+          const result = document.getElementById('result');
+          const modal = document.getElementById('dropdownModal');
+          
+          if (select.value) {
+              manualClusterAssignment=select.selectedIndex;
+              result.textContent = `You selected: ${select.options[select.selectedIndex].text}`;
+              modal.style.display = 'none';
+              if ( manualClusterAssignment > 1 ) {
+                  toBeReassigned.map(nam => {
+                      clusterDict[nam]=manualClusterAssignment-2
+                  });
+              };
+              setTreeAttributes();
+              setLineageLabels(tree);
+              tree.display.update();
+          }
+      }
+
+      // Function to show dropdown modal
+      async function showDropdownModal() {
+          const modal = document.getElementById('dropdownModal');
+          modal.style.display = 'block';
+          populateDropdown();
+      }
+      
+      document.getElementById('itemList').addEventListener('change', handleSelection);
+      
+      
+      $("#process_selected").on("click", async function(e) {
+        toBeReassigned = [];
         tree.display.modifySelection(function(d) {
             if (tree.isLeafNode(d.target)) {
                 if (d.selected) {
@@ -1427,10 +1546,13 @@
             };
           return false;
         });
-        toBeReassigned.map(nam => {
-            clusterDict[nam]=0
-        });
-        setTreeAttributes();
+        showDropdownModal();
+        
+      });
+      
+      $("#revert_selected").on("click", async function(e) {
+        const result = await computeClusters(projectedFeatures);
+        setLineageLabels(tree);
         tree.display.update();
       });
 
@@ -1612,6 +1734,7 @@
         }
       }
       
+      
       function node_colorizer(element, data) {
 
         try {
@@ -1626,6 +1749,7 @@
                 var attr_sep = 1.25
                 
                 var annotation = element.selectAll ("rect").data (tree_attributes[data.data.name]);
+                
                 annotation.enter().append ("rect");
                 annotation.attr ("width", font_size)
                           .attr ("height", font_size)
@@ -1633,6 +1757,9 @@
                           .attr ("y", -font_size/2).style ("fill", function(d, i) {
                             return attribute_to_color (d);
                            });
+                          
+                // annotation.enter().append ("text");
+                // annotation.attr ("text", "MxL5");
                
                 if (this.radial ()) {
                     var shifter =  r_trans;
@@ -1646,6 +1773,7 @@
                         return  x_trans + move_past_label + attr_sep * font_size * i;});
                 }
                 
+
                     
             }
             
@@ -2162,7 +2290,7 @@
         }
         return _warn.apply(console, arguments);
       };
-
-    </script>
+        
+     </script>
   </body>
 </html>
