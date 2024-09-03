@@ -22,6 +22,9 @@
    
     <!-- <meta name="viewport" content="width=device-width, initial-scale=1.0">   -->
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- need the following for implementing NNMF algorithm
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/numeric/1.2.6/numeric.min.js"></script>
+    -->
     <script src="js/phylotree.js"></script>
  
     <!-- <link href="css/phylotree.css" rel="stylesheet" /> -->
@@ -209,9 +212,9 @@
             </div>
             <div id="slider-container">
                 <button id="decrease-r">-</button>
-                <input type="range" id="r-slider" min="0.0" max="2.0" step="0.1" value="0.5">
+                <input type="range" id="rpc-slider" min="0.0" max="1.0" step="0.1" value="0.5">
                 <button id="increase-r">+</button>&nbsp;
-                r = <span id="r-value">0.5</span>&nbsp;
+                r = <span id="r-value">1.0</span>&nbsp;
             </div>
             <button id="cluster">Cluster</button>&nbsp;
             <div id="clusterResults"></div>
@@ -443,8 +446,11 @@
         let lineageDict = {};
         let toBeReassigned = [];
         let visitNames = [];
-        let rBound=2;
-        let r=0.5;
+        let rpcBound=1;
+        let rpc=0.5;
+        let pcMin=-1;
+        let pcMax=1;
+        let r=(pcMax-pcMin)*rpc;
         let mpBound=7;
         let mp=5;
         let alphabet="";
@@ -548,7 +554,7 @@
                 currentSequence.split("").forEach(ch => alphaChars.add(ch))
             }
             visitNames=[...visitNamesSet];
-            console.log(`visit names = ${visitNames}`);
+            // console.log(`visit names = ${visitNames}`);
             
             let testAlphabet = alphaChars.isSubsetOf(new Set(nucleotides));
             if (testAlphabet) {
@@ -631,8 +637,20 @@
             let data = featureVectors;
             const pca = new ML.PCA(data);
             const projectedData = pca.predict(data, { nComponents: 2 }).data;
-            projectedFeatures = pca.predict(allFeatures, { nComponents: 2 }).data;
-            return projectedData;
+            const features = pca.predict(allFeatures, { nComponents: 2 }).data;
+            projectedFeatures = features; //centerData(features);
+            pcMin=projectedFeatures[0][0]
+            pcMax=projectedFeatures[0][0]
+            for (let i=0; i<projectedFeatures.length; i++) {
+                (projectedFeatures[i][0] < pcMin) ? pcMin = projectedFeatures[i][0] : null;
+                (projectedFeatures[i][0] > pcMax) ? pcMax = projectedFeatures[i][0] : null;
+            }
+            pcMin=Math.floor(pcMin);
+            pcMax=Math.ceil(pcMax);
+            const slider = document.getElementById('rpc-slider');
+            slider.value = 0.5;
+            handleRpcSliderChange({ target: slider });
+            return true; // projectedData;
         }
         
         // Function to compute clusters
@@ -641,6 +659,25 @@
             var dbscan = new DBSCAN();
             // parameters: 5 - neighborhood radius, 2 - number of points in neighborhood to form a cluster
             var cls = dbscan.run(data, r, mp);
+            
+            // the following commentedcode attempts to implement non-negative matrix factorisation method of clustering
+            /*
+            console.log(cls.length)
+            
+            var res = multiRestartMatrixFactorization(data, Math.max(2,cls.length), 0.1, 0.1);
+            var Bhat = res[0];
+            var What = res[1];
+            var sos_loss = res[2];
+            var pen_loss = res[3];
+            var loss = res[4];
+            var Shat = numeric.dot(Bhat, What);
+            
+            console.log(What);
+            // assignpoints(W) = (maximum(W,dims = 1)[:] .> 0.975) .* [i[1] for i in argmax(W, dims = 1)[:]]
+            cluster_assignments = assignClusters(What,0.7)
+            console.log(cluster_assignments);
+            console.log (sos_loss, pen_loss, loss);
+            */
             
             clusters = new Array(data.length).fill(0);
             for (let i=0; i<cls.length; i++) {
@@ -678,7 +715,7 @@
             return colors;
         }
         
-        clusterColors = [
+        old_clusterColors = [
             // '#808080', //gray
             '#0000FF', //blue
             '#008000', //green
@@ -693,6 +730,8 @@
             '#000080', //navy
             '#FF00FF'  //fushua
         ];
+        
+        clusterColors = [ '#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080', '#ffffff', '#000000']
         
         lineageDict[0]="HR";
         for (let i=1; i<=maxLineages; i++) {
@@ -1138,20 +1177,21 @@
            handleSSliderChange({ target: slider });
        }
        
-       document.getElementById('r-slider').addEventListener('input', handleRSliderChange);
-       document.getElementById('decrease-r').addEventListener('click', () => changeR(-0.1));
-       document.getElementById('increase-r').addEventListener('click', () => changeR(0.1));
+       document.getElementById('rpc-slider').addEventListener('input', handleRpcSliderChange);
+       document.getElementById('decrease-r').addEventListener('click', () => changeRpc(-0.1));
+       document.getElementById('increase-r').addEventListener('click', () => changeRpc(0.1));
 
-       function handleRSliderChange(event) {
-           r = parseFloat(event.target.value);
+       function handleRpcSliderChange(event) {
+           rpc = parseFloat(event.target.value);
+           r = Math.round( 10 * ( pcMax - pcMin ) * rpc ) / 10;
            document.getElementById('r-value').textContent =` ${r}`;
        }
 
-       function changeR(delta) {
-           const slider = document.getElementById('r-slider');
-           const newR = Math.max(0.1, Math.min(rBound, parseFloat(slider.value) + delta));
-           slider.value = newR;
-           handleRSliderChange({ target: slider });
+       function changeRpc(delta) {
+           const slider = document.getElementById('rpc-slider');
+           const newRpc = Math.max(0.0, Math.min(rpcBound, parseFloat(slider.value) + delta));
+           slider.value = newRpc;
+           handleRpcSliderChange({ target: slider });
        }
        
        document.getElementById('mp-slider').addEventListener('input', handleMPSliderChange);
@@ -1206,7 +1246,7 @@
            }
            let proceed = confirm(`You are about to compute a PCA on ${subSampledFeatures.length} features, do you want to continue? `);
            if (proceed) {
-               const pcaResults = await computePCA(subSampledFeatures);
+               const pcaDone = await computePCA(subSampledFeatures);
                augmentedFeatures = [];
                for (let i=0; i<projectedFeatures.length; i++) {
                    let v=[];
@@ -2274,6 +2314,180 @@
       });
       */
     });
+        
+        function centerData(data) {
+            const [nr, nc] = [data.length, data[0].length];
+            var ret = []
+            var cD = new Array(nc).fill(0);
+            for (let i=0; i<nr; i++) {
+                for (let j=0; j<nc; j++) {
+                    cD[j] += data[i][j]
+                }
+            }
+            for (let i=0; i<nr; i++) {
+                var nR = new Array(nc).fill(0);
+                for (let j=0; j<nc; j++) {
+                    nR[j] = data[i][j] - cD[j]/nr;
+                }
+                ret.push(nR);
+            }
+            return ret
+        }
+        
+        // the following code is for NNMF algorithm, requires numerics package
+        /*
+        
+        function softThreshold(x, λ) {
+          return Math.sign(x) * Math.max(Math.abs(x) - λ, 0);
+        }
+        
+        function normaliseArrayColumns(A,ε) {
+            const [nr, nc] = [A.length, A[0].length];
+            var colSums = new Array(nc).fill(0);
+            for (let i=0; i<nr; i++) {
+                for (let j=0; j<nc; j++) {
+                    colSums[j] += (A[i][j] + ε);
+                }
+            }
+            for (let i=0; i<nr; i++) {
+                for (let j=0; j<nc; j++) {
+                    A[i][j] /= colSums[j];
+                }
+            }
+            return A
+        }
+        
+        function sumArrayAbs(A) {
+            const [nr, nc] = [A.length, A[0].length];
+            var aSum = 0;
+            for (let i=0; i<nr; i++) {
+                for (let j=0; j<nc; j++) {
+                    aSum += Math.abs(A[i][j]);
+                }
+            }
+            return aSum
+        }
+        
+        // returns a gaussian random function with the given mean and stdev.
+        function gaussian(mean, stdev) {
+          var y2;
+          var use_last = false;
+          return function() {
+            var y1;
+            if (use_last) {
+              y1 = y2;
+              use_last = false;
+            } else {
+              var x1, x2, w;
+              do {
+                x1 = 2.0 * Math.random() - 1.0;
+                x2 = 2.0 * Math.random() - 1.0;
+                w = x1 * x1 + x2 * x2;
+              } while (w >= 1.0);
+              w = Math.sqrt((-2.0 * Math.log(w)) / w);
+              y1 = x1 * w;
+              y2 = x2 * w;
+              use_last = true;
+            }
+
+            var retval = mean + stdev * y1;
+            if (retval > 0)
+              return retval;
+            return -retval;
+          }
+        }
+
+        // make a standard gaussian variable.
+        var standard = gaussian(0, 1);
+
+        // make a bunch of standard variates
+        // for (i = 0; i < 1000; i++) {
+        //   console.log( standard() )
+        // }
+        
+        function assignClusters(W,thresh) {
+            const [nr, nc] = [W.length, W[0].length];
+            var assignment = new Array(nc).fill(0);
+            for (let j=0; j<nc; j++) {
+                max_val=0;
+                for (let i=0; i<nr; i++) {
+                    if ( W[i][j] > max_val && W[i][j] > thresh ) {
+                        max_val = W[i][j]
+                        assignment[j] = i + 1
+                    }
+                }
+            }
+            return assignment
+        }
+        
+       
+        
+        function matrixFactorization(S, K, λ_B, λ_W, { maxIter = 1000, tol = 1e-6 } = {}) {
+          const [m, n] = [S[0].length, S.length];
+          const ε = 1e-10; // Small constant to avoid division by zero
+
+          // Initialize B and W
+          let B = Array.from({ length: m }, () => Array.from({ length: K }, () => standard() ));
+          let W = Array.from({ length: K }, () => Array.from({ length: n }, () => Math.abs( standard() ) ) );
+          // let W = Array.from({ length: K }, () => Math.abs(Math.random() * 2 - 1));
+          // W = W.map(w => w / (W.reduce((sum, v) => sum + v + ε, 0) / K)); // Normalize columns to sum to 1
+          W = normaliseArrayColumns(W,ε)
+          let prevError = Infinity;
+
+          for (let iter = 0; iter < maxIter; iter++) {
+            // Update B using a more stable method
+            B = numeric.add( numeric.dot(numeric.transpose(S), numeric.transpose(W)), numeric.mul(λ_B,B) );
+            B = numeric.div(B, numeric.add( numeric.add( numeric.dot(W, numeric.transpose(W)) , (λ_B) ) , ε) );
+            // Update W using proximal gradient descent
+            const α = 1 / (numeric.norm2(B) ** 2 + 1); // Step size
+            const G = numeric.dot(numeric.transpose(B), numeric.sub( numeric.dot(B, W), numeric.transpose(S)));
+            var W_new = numeric.sub(W, numeric.mul(α,G));
+            // let W_new = W.map((w, i) => w - α * G[i]);
+
+            // Apply soft thresholding (L1 proximal operator)
+            W_new = W_new.map(w => w.map( x => softThreshold(x, α * λ_W)));
+            
+
+            // Project W onto the constraint set
+            // W_new = W_new.map(w => Math.max(0, w)); // Ensure non-negativity
+            W_new = W_new.map(w => w.map( x => Math.abs(x)));
+            // const wSum = W_new.reduce((sum, v) => sum + v + ε, 0);
+            // W_new = W_new.map(w => w / wSum); // Normalize columns to sum to 1
+            W_new = normaliseArrayColumns(W_new,ε)
+
+            // Check for convergence norm(S - B * W_new)
+            var error = numeric.sub(numeric.transpose(S), numeric.dot(B, W_new));
+            error = numeric.norm2(error)
+            var sA = sumArrayAbs(W_new);
+            error = error ** 2 + λ_B * ( numeric.norm2(B) ** 2 ) + λ_W * sA; // W_new.reduce((sum, v) => sum + Math.abs(v), 0);
+            if (Math.abs(error - prevError) / (prevError + ε) < tol) {
+              return [B, W_new, error, λ_B * numeric.norm2(B) ** 2 + λ_W * sumArrayAbs(W_new), error];
+            }
+
+            W = W_new;
+            prevError = error;
+          }
+
+          return [B, W, numeric.norm2(numeric.sub(numeric.transpose(S), numeric.dot(B, W))) ** 2, λ_B * numeric.norm2(B) ** 2 + λ_W * sumArrayAbs(W_new), prevError];
+        }
+        
+        function multiRestartMatrixFactorization(S, K, λ_B, λ_W, { maxIter = 1000, tol = 1e-6 } = {}) {
+          let loss = Infinity;
+          let res = [];
+
+          for (let i = 0; i < 100; i++) {
+            const newRes = matrixFactorization(S, K, λ_B, λ_W, { maxIter, tol });
+            if (newRes[4] < loss) {
+              res = newRes;
+              loss = newRes[4];
+              console.log(loss);
+            }
+          }
+          console.log(res);
+          return res;
+        }
+        */
+        
     </script>
 
     <script>
