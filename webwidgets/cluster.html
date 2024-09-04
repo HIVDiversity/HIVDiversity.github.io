@@ -442,7 +442,7 @@
         let clusterDict = {};
         let clusterColors=[];
         let manualClusterAssignment=0;
-        let maxLineages=9;
+        let maxLineages=19;
         let lineageDict = {};
         let toBeReassigned = [];
         let visitNames = [];
@@ -734,6 +734,8 @@
         clusterColors = [ '#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080', '#ffffff', '#000000']
         
         lineageDict[0]="HR";
+        // lineageDict[1]="HM";
+        // lineageDict[2]="Rec";
         for (let i=1; i<=maxLineages; i++) {
             lineageDict[i]=`MxL${i}`;
         }
@@ -1037,7 +1039,8 @@
        function setLineageLabels(tree) {
            tips = tree.getTips();
            for (let ii=0; ii<tips.length; ii++) {
-               if (clusterDict[tips[ii].data["name"]]>=0) {
+               tips[ii].data["annotation"] = "";
+               if ( clusterDict.hasOwnProperty(tips[ii].data["name"]) ) {
                    tips[ii].data["annotation"] = "_" +
                         lineageDict[clusterDict[tips[ii].data["name"]]];
                }
@@ -1514,14 +1517,14 @@
       });
       
       function populateDropdown() {
+          var items=['abort', 'HR', 'MxL1' ]
           var possibles = new Set();
           for ( var k in clusterDict ) {
               possibles.add(clusterDict[k])
           }
           var pa = [...possibles].sort();
-          var max_pa = pa[pa.length-1] + 1;
-          var items=['abort', 'HR' ]
-          for (let i=1; i <= max_pa; i++) {
+          max_pa = pa[pa.length-1] + 1;
+          for (let i=2; i <= max_pa; i++) {
               items.push(`MxL${i}`);
           }
           const select = document.getElementById('itemList');
@@ -1591,7 +1594,11 @@
       });
       
       $("#revert_selected").on("click", async function(e) {
-        const result = await computeClusters(projectedFeatures);
+        if (projectedFeatures.length != 0) {
+            const result = await computeClusters(projectedFeatures);
+        } else {
+            clusterDict = {};
+        }
         setLineageLabels(tree);
         tree.display.update();
       });
