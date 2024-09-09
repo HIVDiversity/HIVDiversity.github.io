@@ -428,6 +428,7 @@
         let referenceName="";
         let founder="";
         let founderName="";
+        let founderLength=0;
         let donerFile="";
         let treeFile="";
         let treeData="";
@@ -511,6 +512,7 @@
             let visitNamesSet = new Set();
             let currentSequence = '';
             let currentName = '';
+            founderLength=0;
             let count=0;
             let alphaChars = new Set();
             for (const line of lines) {
@@ -524,9 +526,18 @@
                         if (count<2 && currentName.toUpperCase().includes("CONSENSUS")) {
                             founderName = currentName;
                             founder = currentSequence;
+                            founderLength = currentSequence.length;
                             count=1;
                         }
                         if (count>1) {
+                            if (founderLength == 0){
+                                alert(`first or second sequence must be a consensus sequence \n with the string "consenus" in the sequence name. \n \n Please try again!`);
+                                return []
+                            }
+                            if (founderLength != currentSequence.length) {
+                                alert(`this is NOT an alignment, sequences are not all the same length. \n \n Please try again! `);
+                                return []
+                            }
                             if (currentName.length > maximum_node_name_length) {
                                 maximum_node_name_length = currentName.length;
                             }
@@ -540,11 +551,19 @@
                     }
                     currentName = line.slice(1).trim();
                 } else {
-                    currentSequence += line.trim();
+                    currentSequence += line.trim().toUpperCase();
                 }
             }
 
             if (currentName) {
+                if (founderLength == 0){
+                    alert(`first or second sequence must be a consensus sequence \n with the string "consenus" in the sequence name. \n \n Please try again!`);
+                    return []
+                }
+                if (founderLength != currentSequence.length) {
+                    alert(`this is NOT an alignment, sequences are not all the same length. \n \n Please try again! `);
+                    return []
+                }
                 if (currentName.length > maximum_node_name_length) {
                     maximum_node_name_length = currentName.length;
                 }
@@ -1790,7 +1809,7 @@
             if (data.data.name in tree_attributes) {   // see if the node has attributes
                 var node_label = element.select("text");
                 var font_size  = parseFloat (node_label.style ("font-size"));
-                var move_past_label = maximum_node_name_length * 0.75 * font_size;
+                var move_past_label = (5+maximum_node_name_length) * 0.75 * font_size;
                 var x_trans = this.right_most_leaf - data.screen_x;
                 var r_trans = this.last_node.radius - data.radius;
                 var attr_sep = 1.25
