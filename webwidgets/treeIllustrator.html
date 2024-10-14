@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -38,7 +37,7 @@
 
     <!-- <meta name="viewport" content="width=device-width, initial-scale=1.0">-->
     <script src="https://d3js.org/d3.v7.js"></script>
-    <script src="js/phylotree.js"></script>
+    <script src="js/phylotree_ill.js"></script>
     
     <!--
     <link href="css/phylotree.css" rel="stylesheet" />
@@ -46,7 +45,7 @@
     
     <defs>
          <style type="text/css">
-             @import url("css/phylotree.css");
+             @import url("css/phylotree_ill.css");
          </style>
      </defs>
 
@@ -223,39 +222,18 @@
             </a>
             <div class="dropdown-menu" aria-labelledby="navbarDropdown">
               <a id="filter_add" class="dropdown-item" href="#"
-                >Add filtered nodes to selection</a
+                >Add filtered leaves to selection</a
               >
               <a id="filter_remove" class="dropdown-item" href="#"
-                >Select all but filtered nodes</a
+                >Remove filtered leaves from selection</a
               >
               <div class="dropdown-divider"></div>
-              <a id="select_all" class="dropdown-item" href="#">Select all</a>
-              <a id="select_all_internal" class="dropdown-item" href="#"
-                >Select all internal nodes</a
-              >
               <a id="select_all_leaves" class="dropdown-item" href="#"
-                >Select all leaf nodes</a
-              >
-              <a id="clear_internal" class="dropdown-item" href="#"
-                >Clear all internal nodes</a
-              >
-              <a id="clear_leaves" class="dropdown-item" href="#"
-                >Clear all leaves</a
+                >Select all leaves</a
               >
               <a id="select_none" class="dropdown-item" href="#"
                 >Clear selection</a
               >
-              <div class="dropdown-divider"></div>
-              <a id="mp_label" class="dropdown-item" href="#"
-                >Label internal nodes using maximum parsimony</a
-              >
-              <a id="and_label" class="dropdown-item" href="#"
-                >Label internal nodes using conjunction (AND)</a
-              >
-              <a id="or_label" class="dropdown-item" href="#"
-                >Label internal nodes using disjunction (OR)</a
-              >
-            </div>
           </li>
         </ul>
 
@@ -266,7 +244,7 @@
                 type="text"
                 id="branch_filter"
                 class="form-control mr-sm-2"
-                placeholder="Filter branches on"
+                placeholder="filter"
                 onkeypress="return event.keyCode != 13"
               />
             </form>
@@ -1071,19 +1049,20 @@
           tree.display.update();
         });
 
-        //console.log('Setting label within the tree display');
-        //console.log(id);
-        //console.log(selection_set[id]);
+        console.log('Setting label within the tree display');
+        console.log(id);
+        console.log(selection_set[id]);
+        console.log(selection_set);
         tree.display.selectionLabel(selection_set[id]);
         tree.display.update();
       }
 
       var width = 800, //$(container_id).width(),
         height = 800, //$(container_id).height()
-        selection_set = ["Foreground"],
+        selection_set = ["NoTag","Rec","HM","MxL1","MxL2"],
         current_selection_name = $("#selection_name_box").val(),
         current_selection_id = 0,
-        max_selections = 10;
+        max_selections = 1;
       (color_scheme = d3.scaleOrdinal(d3.schemeCategory10)),
         (selection_menu_element_action = "phylotree_menu_element_action");
 
