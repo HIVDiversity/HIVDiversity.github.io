@@ -136,15 +136,14 @@
             <medium>Input Newick:</medium>
             <input type="text" id="newickInput" placeholder="Enter Newick string here..."
             value="(((EELA:0.150276,CONGERA:0.213019):0.230956,(EELB:0.263487,CONGERB:0.202633):0.246917):0.094785,((CAVEFISH:0.451027,(GOLDFISH:0.340495,ZEBRAFISH:0.390163):0.220565):0.067778,((((NSAM:0.008113,NARG:0.014065):0.052991,SPUN:0.061003,(SMIC:0.027806,SDIA:0.015298,SXAN:0.046873):0.046977):0.009822,(NAUR:0.081298,(SSPI:0.023876,STIE:0.013652):0.058179):0.091775):0.073346,(MVIO:0.012271,MBER:0.039798):0.178835):0.147992,((BFNKILLIFISH:0.317455,(ONIL:0.029217,XCAU:0.084388):0.201166):0.055908,THORNYHEAD:0.252481):0.061905):0.157214,LAMPFISH:0.717196,((SCABBARDA:0.189684,SCABBARDB:0.362015):0.282263,((VIPERFISH:0.318217,BLACKDRAGON:0.109912):0.123642,LOOSEJAW:0.3971):0.287152):0.140663):0.206729):0.222485,(COELACANTH:0.558103,((CLAWEDFROG:0.441842,SALAMANDER:0.299607):0.135307,((CHAMELEON:0.771665,((PIGEON:0.150909,CHICKEN:0.172733):0.082163,ZEBRAFINCH:0.099172):0.272338):0.014055,((BOVINE:0.167569,DOLPHIN:0.15745):0.104783,ELEPHANT:0.166557):0.367205):0.050892):0.114731):0.295021):0;">
-            <button onclick="drawTree()" title="Load the tree from the Newick string input and display it">Load
-                Tree</button>
-            <button onclick="exportTaggedNewick()"
-                title="Export the current tree with tags as a Newick string file">Export Newick</button>
-            <button onclick="exportSVG()" title="Export the current tree view as an SVG image file">Export SVG</button>
-            <input type="file" id="newickFile" accept=".newick,.txt,.tree" style="display: none;">
             <button onclick="document.getElementById('newickFile').click()" title="Load a Newick string from a file">Load Newick File</button>
+             <button id="exportNewickButton">Export Tagged Tree </button>
+             <input type="file" id="newickFile" accept=".newick,.txt,.tree" style="display: none;">
             <input type="file" id="alignmentFile" accept=".fasta,.fa,.aln" style="display: none;">
             <button onclick="document.getElementById('alignmentFile').click()" title="Load alignment file">Load Alignment</button>
+            <button onclick="exportAlignment()">Export Tagged Alignment </button>
+            <button onclick="exportSVG()" title="Export the current tree view as an SVG image file">Export SVG</button>
+           <button onclick="drawTree()" title="Reload the tree from the Newick string">Reload Tree</button>
         </div>
         <div id="controls-container">
                     <strong>Selection Mode: </strong>
@@ -182,6 +181,8 @@
                             <option value="MxL1">MxL1</option>
                             <option value="MxL2">MxL2</option>
                             <option value="MxL3">MxL3</option>
+                            <option value="MxL4">MxL4</option>
+                            <option value="MxL5">MxL5</option>
                         </select>
                         <button onclick="showTagDropdown()" title="Tag selected nodes" style="display: none;">Tag Selection </button>
                         <button onclick="tagSelection('')" title="Remove tags from all currently selected nodes" style="display: none;">Tag
@@ -204,6 +205,10 @@
                     <label for="textSize" title="Adjust the size of the node labels">Text Size:</label>
                     <input type="range" id="textSize" min="0" max="40" value="10"
                         title="Adjust the size of the node labels">
+                    <label for="boxWidth" title="Adjust the width of alignment boxes">Box Width:</label>
+                    <input type="range" id="boxWidth" min="1" max="25" value="1" step="1" disabled
+                            title="Adjust the width of alignment boxes">
+                    <span id="boxWidthValue">1</span>
                 </div>
                 
             </div>
@@ -219,6 +224,10 @@
     </div>
 
     <script>
+        // Add these near the top of your script with other global variables
+        let originalNewickFileName = 'phylogenetic_tree.nwk';
+        let originalAlignmentFileName = 'alignment.fasta';
+
         class Node {
             constructor(name = "", length = 0) {
                 this.name = name;
@@ -250,7 +259,11 @@
 
         let boxWidth = 1;
 
-        const colors = {
+        // Define the tags array at the top of your script
+        const TAGS = ['NoTag', 'HM', 'Rec', 'MxL1', 'MxL2', 'MxL3', 'MxL4', 'MxL5'];
+
+        // Define colors for tags
+        const TAG_COLORS = {
             default: 'rgba(0,0,0,1.0)',
             defaultSelected: 'rgba(100,100,100,0.4)',
             NoTag: 'rgba(0,0,0,1.0)',
@@ -264,7 +277,11 @@
             MxL2: 'rgba(255,165,0,1.0)',
             MxL2Selected: 'rgba(255,200,100,0.4)',
             MxL3: 'rgba(128,0,128,1.0)',
-            MxL3Selected: 'rgba(200,100,200,0.4)'
+            MxL3Selected: 'rgba(200,100,200,0.4)',
+            MxL4: 'rgba(0,128,128,1.0)',  // Teal
+            MxL4Selected: 'rgba(100,200,200,0.4)',
+            MxL5: 'rgba(128,128,0,1.0)',  // Olive
+            MxL5Selected: 'rgba(200,200,100,0.4)'
         };
 
         function handleMouseDown(event) {
@@ -349,7 +366,7 @@
                 let lastUnderscoreIndex = name.lastIndexOf('_');
                 if (lastUnderscoreIndex !== -1) {
                     let possibleTag = name.substring(lastUnderscoreIndex + 1);
-                    if (['HM', 'Rec', 'MxL1', 'MxL2', 'MxL3'].includes(possibleTag)) {
+                    if (TAGS.includes(possibleTag)) {
                         tag = possibleTag;
                         name = name.substring(0, lastUnderscoreIndex);
                     }
@@ -405,11 +422,11 @@
             const selWidth = 3;
             ctx.lineWidth = node.selected ? selWidth : defaultWidth;
 
-            let nodeColor = colors.default;
-            if (node.tag && colors[node.tag]) {
-                nodeColor = node.selected ? colors[node.tag + 'Selected'] : colors[node.tag];
+            let nodeColor = TAG_COLORS.default;
+            if (node.tag && TAG_COLORS[node.tag]) {
+                nodeColor = node.selected ? TAG_COLORS[node.tag + 'Selected'] : TAG_COLORS[node.tag];
             } else {
-                nodeColor = node.selected ? colors.defaultSelected : colors.default;
+                nodeColor = node.selected ? TAG_COLORS.defaultSelected : TAG_COLORS.default;
             }
 
             ctx.fillStyle = nodeColor;
@@ -422,11 +439,11 @@
 
             if (node.children.length > 0) {
                 for (let child of node.children) {
-                    let childColor = colors.default;
-                    if (child.tag && colors[child.tag]) {
-                        childColor = child.selected ? colors[child.tag + 'Selected'] : colors[child.tag];
+                    let childColor = TAG_COLORS.default;
+                    if (child.tag && TAG_COLORS[child.tag]) {
+                        childColor = child.selected ? TAG_COLORS[child.tag + 'Selected'] : TAG_COLORS[child.tag];
                     } else {
-                        childColor = child.selected ? colors.defaultSelected : colors.default;
+                        childColor = child.selected ? TAG_COLORS.defaultSelected : TAG_COLORS.default;
                     }
                     ctx.strokeStyle = childColor;
                     ctx.lineWidth = child.selected ? selWidth : defaultWidth;
@@ -619,18 +636,23 @@
 
             const allNodes = getAllNodes(root);
             const maxY = Math.max(...allNodes.map(n => n.x)) + 200;
-            const maxX = Math.max(...allNodes.map(n => n.y)) + 500;
+            let maxX = Math.max(...allNodes.map(n => n.y)) + 500;
+
+            // If alignment is loaded, add space for it
+            if (alignment) {
+                maxX += Object.values(alignment)[0].length * boxWidth;
+            }
 
             svg.setAttribute("width", maxX);
             svg.setAttribute("height", maxY);
             svg.setAttribute("viewBox", `0 0 ${maxX} ${maxY}`);
 
             function drawNodeSVG(node) {
-                let nodeColor = colors.default;
-                if (node.tag && colors[node.tag]) {
-                    nodeColor = node.selected ? colors[node.tag + 'Selected'] : colors[node.tag];
+                let nodeColor = TAG_COLORS.default;
+                if (node.tag && TAG_COLORS[node.tag]) {
+                    nodeColor = node.selected ? TAG_COLORS[node.tag + 'Selected'] : TAG_COLORS[node.tag];
                 } else {
-                    nodeColor = node.selected ? colors.defaultSelected : colors.default;
+                    nodeColor = node.selected ? TAG_COLORS.defaultSelected : TAG_COLORS.default;
                 }
 
                 const circSize = node.selected ? 3 : 2;
@@ -643,11 +665,11 @@
 
                 if (node.children.length > 0) {
                     for (let child of node.children) {
-                        let childColor = colors.default;
-                        if (child.tag && colors[child.tag]) {
-                            childColor = child.selected ? colors[child.tag + 'Selected'] : colors[child.tag];
+                        let childColor = TAG_COLORS.default;
+                        if (child.tag && TAG_COLORS[child.tag]) {
+                            childColor = child.selected ? TAG_COLORS[child.tag + 'Selected'] : TAG_COLORS[child.tag];
                         } else {
-                            childColor = child.selected ? colors.defaultSelected : colors.default;
+                            childColor = child.selected ? TAG_COLORS.defaultSelected : TAG_COLORS.default;
                         }
 
                         const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -681,13 +703,64 @@
 
             drawNodeSVG(root);
 
+            // Draw alignment if it exists
+            if (alignment) {
+                const treeWidth = Math.max(...allNodes.map(n => n.y)) + 500;
+                const leafNodes = getLeafNodes(root);
+                const seqLength = Object.values(alignment)[0].length;
+                const referenceSeq = Object.values(alignment)[0].toUpperCase();
+
+                leafNodes.forEach((node, index) => {
+                    const seq = alignment[node.name];
+                    if (!seq) return;
+
+                    const upperSeq = seq.toUpperCase();
+                    const yPosition = node.x + 50 - verticalScale / 2;
+
+                    if (index === 0) {
+                        // Draw the full reference sequence
+                        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                        rect.setAttribute('x', treeWidth);
+                        rect.setAttribute('y', yPosition);
+                        rect.setAttribute('width', seqLength * boxWidth);
+                        rect.setAttribute('height', textSize);
+                        rect.setAttribute('fill', '#F0F0F0'); // Light gray background
+                        svg.appendChild(rect);
+
+                    for (let x = 0; x < seqLength; x++) {
+                        const charRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                        charRect.setAttribute('x', treeWidth + x * boxWidth);
+                        charRect.setAttribute('y', yPosition);
+                        charRect.setAttribute('width', boxWidth);
+                        charRect.setAttribute('height', textSize);
+                        charRect.setAttribute('fill', alignmentColorMap[upperSeq[x]] || '#F0F0F0');
+                    svg.appendChild(charRect);
+                }
+            } else {
+                // Draw only differences from the reference sequence
+                for (let x = 0; x < seqLength; x++) {
+                    if (upperSeq[x] !== referenceSeq[x]) {
+                        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                        rect.setAttribute('x', treeWidth + x * boxWidth);
+                        rect.setAttribute('y', yPosition);
+                        rect.setAttribute('width', boxWidth);
+                        rect.setAttribute('height', textSize);
+                        rect.setAttribute('fill', alignmentColorMap[upperSeq[x]] || '#F0F0F0');
+                        svg.appendChild(rect);
+                    }
+                }
+            }
+
+                });
+            }
+
             const serializer = new XMLSerializer();
             const svgString = serializer.serializeToString(svg);
             const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
             const url = URL.createObjectURL(blob);
             const link = document.createElement("a");
             link.href = url;
-            link.download = "phylogenetic_tree.svg";
+            link.download = originalNewickFileName.replace(/\.[^/.]+$/, ".svg");
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -918,6 +991,7 @@
         function loadNewickFile(event) {
             const file = event.target.files[0];
             if (file) {
+                originalNewickFileName = file.name;
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     document.getElementById('newickInput').value = e.target.result.trim();
@@ -927,10 +1001,31 @@
             }
         }
 
+        function loadAlignmentFile(event) {
+            const file = event.target.files[0];
+            if (file) {
+                originalAlignmentFileName = file.name;
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    parseAlignment(e.target.result);
+                };
+                reader.readAsText(file);
+            }
+        }
+
         function showTagDropdown() {
-            const dropdown = document.getElementById('tagDropdown');
-            dropdown.style.display = 'inline-block';
-            dropdown.onchange = function() {
+            const tagDropdown = document.getElementById('tagDropdown');
+            tagDropdown.innerHTML = ''; // Clear existing options
+
+            TAGS.forEach(tag => {
+                const option = document.createElement('option');
+                option.value = tag;
+                option.textContent = tag;
+                tagDropdown.appendChild(option);
+            });
+
+            tagDropdown.style.display = 'inline-block';
+            tagDropdown.onchange = function() {
                 // Store previous tags before applying new ones
                 storePreviousTags();
                 tagSelection(this.value);
@@ -992,27 +1087,17 @@
             draw(root);
         }
 
+        function enableBoxWidthSlider() {
+            const boxWidthSlider = document.getElementById('boxWidth');
+            boxWidthSlider.disabled = false;
+        }
+
         function updateBoxWidth() {
             boxWidth = parseInt(document.getElementById('boxWidth').value);
             document.getElementById('boxWidthValue').textContent = boxWidth;
             if (alignment) {
                 drawAlignment();
             }
-        }
-
-        function createBoxWidthSlider() {
-            const controlsContainer = document.getElementById('sliders-container') || document.body; // Adjust this to match your layout
-            
-            const sliderContainer = document.createElement('div');
-            sliderContainer.innerHTML = `
-                <label for="boxWidth">Box width:</label>
-                <input type="range" id="boxWidth" min="1" max="25" value="1" step="1">
-                <span id="boxWidthValue">1</span>
-            `;
-            
-            controlsContainer.appendChild(sliderContainer);
-            
-            document.getElementById('boxWidth').addEventListener('input', updateBoxWidth);
         }
 
         function parseAlignment(data) {
@@ -1026,8 +1111,7 @@
                     if (currentName) {
                         let lastUnderscoreIndex = currentName.lastIndexOf('_');
                         let possibleTag = currentName.substring(lastUnderscoreIndex + 1);
-                        if (['HM', 'Rec', 'MxL1', 'MxL2', 'MxL3'].includes(possibleTag)) {
-                            tag = possibleTag;
+                        if (TAGS.includes(possibleTag)) {
                             currentName = currentName.substring(0, lastUnderscoreIndex);
                         }
                         sequences[currentName] = currentSeq;
@@ -1041,8 +1125,7 @@
             if (currentName) {
                 let lastUnderscoreIndex = currentName.lastIndexOf('_');
                 let possibleTag = currentName.substring(lastUnderscoreIndex + 1);
-                if (['HM', 'Rec', 'MxL1', 'MxL2', 'MxL3'].includes(possibleTag)) {
-                    tag = possibleTag;
+                if (TAGS.includes(possibleTag)) {
                     currentName = currentName.substring(0, lastUnderscoreIndex);
                 }
                 sequences[currentName] = currentSeq;
@@ -1063,7 +1146,6 @@
             }
 
             const seqLength = Object.values(sequences)[0].length;
-            console.log(`Original alignment length: ${seqLength}`);
 
             // Remove invariant columns
             const variantColumns = [];
@@ -1074,19 +1156,19 @@
                 }
             }
 
-            console.log(`Number of variant columns: ${variantColumns.length}`);
+            // console.log(`Number of variant columns: ${variantColumns.length}`);
 
             for (const name in sequences) {
                 sequences[name] = variantColumns.map(i => sequences[name][i]).join('');
             }
 
-            console.log(`New alignment length: ${sequences[Object.keys(sequences)[0]].length}`);
+            // console.log(`New alignment length: ${sequences[Object.keys(sequences)[0]].length}`);
 
             alignment = sequences;
             alignmentAlphabet = getAlphabet();
             alignmentColorMap = getColorMap(alignmentAlphabet);
             
-            createBoxWidthSlider(); // Create the slider after parsing the alignment
+            enableBoxWidthSlider(); // Create the slider after parsing the alignment
             drawAlignment();
         }
 
@@ -1094,6 +1176,8 @@
         function loadAlignmentFile(event) {
             const file = event.target.files[0];
             if (file) {
+                originalAlignmentFileName = file.name;
+                
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     parseAlignment(e.target.result);
@@ -1109,21 +1193,6 @@
             }
         });
 
-        document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('horizontalScale').addEventListener('input', updateScales);
-            document.getElementById('verticalScale').addEventListener('input', updateScales);
-            document.getElementById('textSize').addEventListener('input', updateScales);
-            document.getElementById('treeCanvas').addEventListener('mousedown', handleMouseDown);
-            document.getElementById('treeCanvas').addEventListener('mousemove', handleMouseMove);
-            document.getElementById('treeCanvas').addEventListener('mouseup', handleMouseUp);
-            document.getElementById('newickFile').addEventListener('change', loadNewickFile);
-
-            // Initial draw
-            drawTree();
-            setSelectionMode('clade');
-            showTagDropdown();
-        });
-
         function getLeafNames(node) {
             if (node.children.length === 0) {
                 return [node.name];
@@ -1132,9 +1201,10 @@
         }
 
         function getAlphabet() {
+            const nucs = new Set(['A', 'T', 'C', 'G', 'N', '-']);
             const allChars = new Set(Object.values(alignment).join('').toUpperCase());
-            if (allChars.has('A') && allChars.has('T')) {
-                return 'ACGT-';
+            if (allChars.isSubsetOf(nucs)) {
+                return 'ACGTN-';
             }
             return 'ACDEFGHIKLMNPQRSTVWY-';
         }
@@ -1234,6 +1304,99 @@
                 canvasContainer.scrollTop = this.scrollTop;
             };
         }
+
+        function exportAlignment() {
+            if (!alignment) {
+                alert('No alignment loaded. Please load an alignment first.');
+                return;
+            }
+
+            let fastaContent = '';
+            const leafNodes = getLeafNodes(root);
+
+            leafNodes.forEach(node => {
+                if (alignment[node.name]) {
+                    let name = node.name;
+                    if (node.tag && node.tag !== 'NoTag') {
+                        name += '_' + node.tag;
+                    }
+                    fastaContent += '>' + name + '\n';
+                    fastaContent += alignment[node.name] + '\n';
+                }
+            });
+
+            const blob = new Blob([fastaContent], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = originalAlignmentFileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        function exportNewick() {
+            
+            function generateNewick(node) {
+                if (node.children.length === 0) {
+                    let name = node.name;
+                    if (node.tag && node.tag !== 'NoTag') {
+                        name += '_' + node.tag;
+                    }
+                    return name + ':' + node.length;
+                } else {
+                    const childrenNewick = node.children.map(generateNewick).join(',');
+                    let nodeNewick = '(' + childrenNewick + ')';
+                    if (node.name || node.tag) {
+                        let name = node.name || '';
+                        if (node.tag && node.tag !== 'NoTag') {
+                            name += (name ? '_' : '') + node.tag;
+                        }
+                        nodeNewick += name;
+                    }
+                    return nodeNewick + ':' + node.length;
+                }
+            }
+
+            const newickString = generateNewick(root) + ';';
+            const blob = new Blob([newickString], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = originalNewickFileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+
+        // Ensure the function is accessible globally
+        window.exportNewick = exportNewick;
+
+
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('horizontalScale').addEventListener('input', updateScales);
+            document.getElementById('verticalScale').addEventListener('input', updateScales);
+            document.getElementById('textSize').addEventListener('input', updateScales);
+            document.getElementById('boxWidth').addEventListener('input', updateBoxWidth);
+            document.getElementById('treeCanvas').addEventListener('mousedown', handleMouseDown);
+            document.getElementById('treeCanvas').addEventListener('mousemove', handleMouseMove);
+            document.getElementById('treeCanvas').addEventListener('mouseup', handleMouseUp);
+            document.getElementById('newickFile').addEventListener('change', loadNewickFile);
+            document.getElementById('boxWidthValue').textContent = boxWidth;
+
+            // Initial draw
+            drawTree();
+            setSelectionMode('clade');
+            showTagDropdown();
+
+            const exportNewickButton = document.getElementById('exportNewickButton');
+            if (exportNewickButton) {
+        exportNewickButton.addEventListener('click', exportNewick);
+    }
+        });
+
     </script>
 </body>
 
