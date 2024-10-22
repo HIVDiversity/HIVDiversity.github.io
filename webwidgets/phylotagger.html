@@ -497,13 +497,29 @@
 
             drawNode(root, ctx);
 
+            // Draw vertical dotted line at x = 0.01
+            const scaleLineX = ( 0.01 / maxTreeDistance ) * horizontalScale; // No need to add 50 here
+            ctx.beginPath();
+            ctx.setLineDash([5, 5]); // Set line to dotted
+            ctx.moveTo(scaleLineX, 0);
+            ctx.lineTo(scaleLineX, canvas.height - 190); // Subtract 190 to account for top and bottom padding
+            ctx.strokeStyle = 'gray';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.setLineDash([]); // Reset line to solid
+
+            // Add scale label
+            ctx.font = '12px Arial';
+            ctx.fillStyle = 'gray';
+            ctx.textAlign = 'center';
+            ctx.fillText('0.01', scaleLineX, canvas.height - 160);
+
             if (selectionMode === 'box' && isBoxSelecting && drawBoxStartX !== undefined) {
                 ctx.strokeStyle = 'rgba(0, 0, 255, 0.5)';
                 ctx.fillStyle = 'rgba(0, 0, 255, 0.1)';
                 ctx.lineWidth = 2;
                 const width = drawBoxEndX - drawBoxStartX;
                 const height = drawBoxEndY - drawBoxStartY;
-                // Adjust for the canvas translation
                 ctx.strokeRect(drawBoxStartX, drawBoxStartY, width, height);
                 ctx.fillRect(drawBoxStartX, drawBoxStartY, width, height);
             }
@@ -702,6 +718,29 @@
             }
 
             drawNodeSVG(root);
+
+            // Add scale line
+            const scaleLineX = ( 0.01 / maxTreeDistance ) * horizontalScale + 50; // Add 50 to account for the translation
+            const scaleLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+            scaleLine.setAttribute("x1", scaleLineX);
+            scaleLine.setAttribute("y1", 50);
+            scaleLine.setAttribute("x2", scaleLineX);
+            scaleLine.setAttribute("y2", maxY - 50);
+            scaleLine.setAttribute("stroke", "gray");
+            scaleLine.setAttribute("stroke-width", "1");
+            scaleLine.setAttribute("stroke-dasharray", "5,5");
+            svg.appendChild(scaleLine);
+
+            // Add scale label
+            const scaleLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            scaleLabel.setAttribute("x", scaleLineX);
+            scaleLabel.setAttribute("y", maxY - 30);
+            scaleLabel.setAttribute("font-family", "Arial");
+            scaleLabel.setAttribute("font-size", "12");
+            scaleLabel.setAttribute("fill", "gray");
+            scaleLabel.setAttribute("text-anchor", "middle");
+            scaleLabel.textContent = "0.01";
+            svg.appendChild(scaleLabel);
 
             // Draw alignment if it exists
             if (alignment) {
