@@ -194,10 +194,16 @@
         <div id="content-container">
             <div id="left-panel">
                 <div id="sliders-container" class="horizontal-slider-container">
+                    <label for="scaleLineValue" title="Adjust the position of the scale line">Scale Line:</label>
+                    <input type="range" id="scaleLineValue" min="0" max="0.1" step="0.01" value="0.01"
+                        title="Adjust the position of the scale line">
+                    <span id="scaleLineValueDisplay">0.01</span>
+
+                    <!-- Existing sliders -->
                     <label for="verticalScale" title="Adjust the vertical spacing between nodes">Vertical:</label>
                     <input type="range" id="verticalScale" min="1" max="100" value="20"
                         title="Adjust the vertical spacing between nodes">
-               
+                
                     <label for="horizontalScale" title="Adjust the horizontal spacing between nodes">Horizontal:</label>
                     <input type="range" id="horizontalScale" min="1" max="2000" value="200"
                         title="Adjust the horizontal spacing between nodes">
@@ -480,6 +486,17 @@
             return nodes;
         }
 
+        let scaleLineValue = 0.01; // Initialize with default value
+
+        function updateScales() {
+            horizontalScale = parseInt(document.getElementById('horizontalScale').value);
+            verticalScale = parseInt(document.getElementById('verticalScale').value);
+            textSize = parseInt(document.getElementById('textSize').value);
+            scaleLineValue = parseFloat(document.getElementById('scaleLineValue').value);
+            document.getElementById('scaleLineValueDisplay').textContent = scaleLineValue.toFixed(2);
+            draw(root);
+        }
+
         function draw(root) {
             const maxDepth = calculateDepths(root);
             calculatePositions(root, 0, { count: 0 }, maxDepth);
@@ -497,12 +514,12 @@
 
             drawNode(root, ctx);
 
-            // Draw vertical dotted line at x = 0.01
-            const scaleLineX = ( 0.01 / maxTreeDistance ) * horizontalScale; // No need to add 50 here
+            // Draw vertical dotted line at x = scaleLineValue
+            const scaleLineX = (scaleLineValue / maxTreeDistance) * horizontalScale;
             ctx.beginPath();
             ctx.setLineDash([5, 5]); // Set line to dotted
             ctx.moveTo(scaleLineX, 0);
-            ctx.lineTo(scaleLineX, canvas.height - 190); // Subtract 190 to account for top and bottom padding
+            ctx.lineTo(scaleLineX, canvas.height - 190);
             ctx.strokeStyle = 'gray';
             ctx.lineWidth = 1;
             ctx.stroke();
@@ -512,7 +529,7 @@
             ctx.font = '12px Arial';
             ctx.fillStyle = 'gray';
             ctx.textAlign = 'center';
-            ctx.fillText('0.01', scaleLineX, canvas.height - 160);
+            ctx.fillText(scaleLineValue.toFixed(2), scaleLineX, canvas.height - 160);
 
             if (selectionMode === 'box' && isBoxSelecting && drawBoxStartX !== undefined) {
                 ctx.strokeStyle = 'rgba(0, 0, 255, 0.5)';
@@ -539,13 +556,6 @@
             // Calculate the maximum tree distance
             maxTreeDistance = calculateMaxTreeDistance(root);
 
-            draw(root);
-        }
-
-        function updateScales() {
-            horizontalScale = parseInt(document.getElementById('horizontalScale').value);
-            verticalScale = parseInt(document.getElementById('verticalScale').value);
-            textSize = parseInt(document.getElementById('textSize').value);
             draw(root);
         }
 
@@ -720,7 +730,7 @@
             drawNodeSVG(root);
 
             // Add scale line
-            const scaleLineX = ( 0.01 / maxTreeDistance ) * horizontalScale + 50; // Add 50 to account for the translation
+            const scaleLineX = (scaleLineValue / maxTreeDistance) * horizontalScale + 50;
             const scaleLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
             scaleLine.setAttribute("x1", scaleLineX);
             scaleLine.setAttribute("y1", 50);
@@ -739,7 +749,7 @@
             scaleLabel.setAttribute("font-size", "12");
             scaleLabel.setAttribute("fill", "gray");
             scaleLabel.setAttribute("text-anchor", "middle");
-            scaleLabel.textContent = "0.01";
+            scaleLabel.textContent = scaleLineValue.toFixed(2);
             svg.appendChild(scaleLabel);
 
             // Draw alignment if it exists
@@ -1424,6 +1434,7 @@
             document.getElementById('treeCanvas').addEventListener('mouseup', handleMouseUp);
             document.getElementById('newickFile').addEventListener('change', loadNewickFile);
             document.getElementById('boxWidthValue').textContent = boxWidth;
+            document.getElementById('scaleLineValue').addEventListener('input', updateScales);
 
             // Initial draw
             drawTree();
