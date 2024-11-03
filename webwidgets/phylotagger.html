@@ -1496,42 +1496,6 @@
             return distance;
         }
 
-        function clusterLeavesByDistance() {
-            const leaves = getLeafNodes(root);
-            
-            // Create array of leaf objects with indices
-            const leafObjects = leaves.map((leaf, index) => ({
-                node: leaf,
-                index: index,
-                name: leaf.name
-            }));
-            
-            // Create distance function for DBSCAN
-            const distanceFunction = (a, b) => {
-                return calculateTreeDistance(a.node, b.node);
-            };
-            
-            // Initialize DBSCAN
-            const dbscan = new DBSCAN(leafObjects, 0.01, 5, distanceFunction);
-            
-            // Run clustering
-            const clusters = dbscan.run();
-            
-            // Format and log results
-            console.log('DBSCAN Clustering Results:');
-            clusters.forEach((cluster, i) => {
-                const clusterLeafNames = cluster.map(idx => leafObjects[idx].name);
-                console.log(`Cluster ${i + 1}: ${clusterLeafNames.join(', ')}`);
-            });
-            
-            // Log noise points if any
-            if (dbscan.noise.length > 0) {
-                const noiseLeafNames = dbscan.noise.map(idx => leafObjects[idx].name);
-                console.log(`Noise points: ${noiseLeafNames.join(', ')}`);
-            }
-        }
-
-        // Modify the reportTreeDiameter function to also run clustering
         function reportTreeDiameter() {
             const leaves = getLeafNodes(root);
             let maxDistance = 0;
@@ -1549,9 +1513,6 @@
             
             console.log(`Tree diameter: ${maxDistance}`);
             console.log(`Furthest leaves: ${furthestPair[0].name} and ${furthestPair[1].name}`);
-            
-            // Run DBSCAN clustering
-            clusterLeavesByDistance();
             
             return maxDistance;
         }
@@ -1608,8 +1569,8 @@
                 });
                 
                 // Log cluster results
-                const clusterLeafNames = cluster.map(idx => leafObjects[idx].name);
-                console.log(`Cluster ${i + 1} (${clusterTag}): ${clusterLeafNames.join(', ')}`);
+                // const clusterLeafNames = cluster.map(idx => leafObjects[idx].name);
+                // console.log(`Cluster ${i + 1} (${clusterTag}): ${clusterLeafNames.join(', ')}`);
             });
             
             // Tag noise points as "HM"
@@ -1617,8 +1578,8 @@
                 dbscan.noise.forEach(idx => {
                     leafObjects[idx].node.tag = 'HM';
                 });
-                const noiseLeafNames = dbscan.noise.map(idx => leafObjects[idx].name);
-                console.log(`Noise points (HM): ${noiseLeafNames.join(', ')}`);
+                // const noiseLeafNames = dbscan.noise.map(idx => leafObjects[idx].name);
+                // console.log(`Noise points (HM): ${noiseLeafNames.join(', ')}`);
             }
             
             // Redraw the tree to show the new tags and updated scale line
