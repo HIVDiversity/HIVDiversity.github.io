@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Phylotagger</title>
+    <script src="js/DBSCAN.js"></script>
     <style>
         body,
         html {
@@ -40,9 +41,15 @@
 
         #controls-container {
             display: flex;
-            align-items: center;
+            flex-direction: column;
+            flex-shrink: 0;
+            overflow: hidden;
+        }
+
+        #controls-container > div {
             padding: 10px;
             border-bottom: 1px solid #ccc;
+            flex-shrink: 0;
         }
 
         #scale-container {
@@ -67,6 +74,7 @@
             flex-direction: column;
             flex-grow: 1;
             overflow: hidden;
+            min-height: 0;
         }
 
         #left-panel {
@@ -135,7 +143,7 @@
         <div id="top-panel">
             <medium>Newick:</medium>
             <input type="text" id="newickInput" placeholder="Enter Newick string here..."
-            value="(((EELA:0.00150276,CONGERA:0.00213019):0.00230956,(EELB:0.00263487,CONGERB:0.00202633):0.00246917):0.00094785,((CAVEFISH:0.00451027,(GOLDFISH:0.00340495,ZEBRAFISH:0.00390163):0.00220565):0.00067778,((((NSAM:0.00008113,NARG:0.00014065):0.00052991,SPUN:0.00061003,(SMIC:0.00027806,SDIA:0.00015298,SXAN:0.00046873):0.00046977):0.00009822,(NAUR:0.00081298,(SSPI:0.00023876,STIE:0.00013652):0.00058179):0.00091775):0.00073346,(MVIO:0.00012271,MBER:0.00039798):0.00178835):0.00147992,((BFNKILLIFISH:0.00317455,(ONIL:0.00029217,XCAU:0.00084388):0.00201166):0.00055908,THORNYHEAD:0.00252481):0.00061905):0.00157214,LAMPFISH:0.00717196,((SCABBARDA:0.00189684,SCABBARDB:0.00362015):0.00282263,((VIPERFISH:0.00318217,BLACKDRAGON:0.00109912):0.00123642,LOOSEJAW:0.003971):0.00287152):0.00140663):0.00206729):0.00222485,(COELACANTH:0.00558103,((CLAWEDFROG:0.00441842,SALAMANDER:0.00299607):0.00135307,((CHAMELEON:0.00771665,((PIGEON:0.00150909,CHICKEN:0.00172733):0.00082163,ZEBRAFINCH:0.00099172):0.00272338):0.00014055,((BOVINE:0.00167569,DOLPHIN:0.0015745):0.00104783,ELEPHANT:0.00166557):0.00367205):0.00050892):0.00114731):0.00295021):0;">
+            value="(((EELA:0.00150276,CONGERA:0.00213019):0.00230956,(EELB:0.00263487,CONGERB:0.00202633):0.00246917):0.00094785,((CAVEFISH:0.00451027,(GOLDFISH:0.00340495,ZEBRAFISH:0.00390163):0.00220565):0.00067778,((((NSAM:0.00008113,NARG:0.00014065):0.00052991,SPUN:0.00061003,(SMIC:0.00027806,SDIA:0.00015298,SXAN:0.00046873):0.00046977):0.00009822,(NAUR:0.00081298,(SSPI:0.00023876,STIE:0.00013652):0.00058179):0.00091775):0.00073346,(MVIO:0.00012271,MBER:0.00039798):0.00178835):0.00147992,((BFNKILLIFISH:0.00317455,(ONIL:0.00029217,XCAU:0.00084388):0.00201166):0.00055908,THORNYHEAD:0.00252481):0.00061905):0.00157214,LAMPFISH:0.00717196,((SCABBARDA:0.00189684,SCABBARDB:0.00362015):0.00282263,((VIPERFISH:0.00318217,BLACKDRAGON:0.00109912):0.00123642,LOOSEJAW:0.003971):0.00287152):0.00140663):0.00206729):0.00222485,(COELACANTH:0.00558103,((CLAWEDFROG:0.00441842,SALAMANDER:0.00299607):0.00135307,((CHAMELEON:0.00771665,((PIGEON:0.00150909,CHICKEN:0.00172733):0.00082163,ZEBRAFINCH:0.00099172):0.00272338):0.00014055,((BOVINE:0.00167569,DOLPHIN:0.0015745):0.00104783,ELEPHANT:0.00166557):0.00367205):0.00050892):0.00114731):0;">
             <button onclick="document.getElementById('newickFile').click()" title="Load a Newick string from a file">Load Newick File</button>
              <button id="exportNewickButton">Export Tagged Tree </button>
              <input type="file" id="newickFile" accept=".newick,.txt,.tree" style="display: none;">
@@ -145,57 +153,64 @@
             <button onclick="exportSVG()" title="Export the current tree view as an SVG image file">Export SVG</button>
            <button onclick="drawTree()" title="Reload the tree from the Newick string">Reload Tree</button>
         </div>
+         <!-- Second row: DBSCAN controls -->
+         <div style="display: flex; align-items: center; margin-bottom: 10px; border-bottom: 1px solid #ccc; padding: 10px;">
+            <medium>Cluster:&nbsp;</medium>
+            <div class="horizontal-slider-container">
+                <label for="epsilonValue" title="DBSCAN epsilon parameter">&nbsp;Epsilon:</label>
+                <input type="range" id="epsilonValue" min="0.001" max="0.1" step="0.001" value="0.01">
+                <span id="epsilonValueDisplay">0.01</span>
+                
+                <label for="minPtsValue" title="DBSCAN minimum points parameter">&nbsp;MinPts:</label>
+                <input type="range" id="minPtsValue" min="1" max="10" step="1" value="5">
+                <span id="minPtsValueDisplay">5</span>
+                &nbsp;
+                <button onclick="runDBSCAN()" title="Run DBSCAN clustering">Scan</button>
+            </div>
+        </div>
         <div id="controls-container">
-                    <strong>Selection Mode: </strong>
-                    <button onclick="setSelectionMode('clade')" id="cladeMode"
-                        title="Set selection mode to Clade: clicking a node selects all its descendant leaves">Clade</button>
-                    <button onclick="setSelectionMode('node')" id="nodeMode" style="display: none;"
-                        title="Set selection mode to Node: clicking a node selects only that node">Node</button>
-                    <button onclick="setSelectionMode('nodeToRoot')" id="nodeToRootMode" style="display: none;"
-                        title="Set selection mode to Node to Root: clicking a node selects it and all its ancestors up to the root">Node2Root</button>
-                    <button onclick="setSelectionMode('nodeToTag')" id="nodeToTagMode" style="display: none;"
-                        title="Set selection mode to Node to Tag: clicking a node selects it and all its ancestors up to the first tagged node">Node2Tag</button>
-                    <button onclick="setSelectionMode('box')" id="boxMode"
-                        title="Set selection mode to Box: click and drag to select multiple leaves within a rectangular area">Box
-                        Select</button>
-<!--
-                    <medium>Expand:</medium>
-                    <button onclick="expandSelectionDown()"
-                        title="Expand the current selection to include all descendants of selected nodes">Down</button>
-                    <button onclick="expandSelectionUp()"
-                        title="Expand the current selection upwards, selecting parent nodes if all their children are selected">Up</button>
--->
-                    <strong> Tag Selected: </strong>
-                    <input type="text" id="regexInput" placeholder="Enter regex" style="display: none;"
-                        title="Enter a regular expression to match node names">
-                    <button onclick="selectRegexMatches()" style="display: none;"
-                            title="Select all nodes whose names match the entered regular expression">Select
-                            Matches</button>
+            <!-- First row: Selection Mode controls -->
+            <div style="display: flex; align-items: center; margin-bottom: 10px; border-bottom: 1px solid #ccc; ">
+                <medium>Selection Mode: </medium>
+                <button onclick="setSelectionMode('clade')" id="cladeMode"
+                    title="Set selection mode to Clade: clicking a node selects all its descendant leaves">Clade</button>
+                <button onclick="setSelectionMode('node')" id="nodeMode" style="display: none;"
+                    title="Set selection mode to Node: clicking a node selects only that node">Node</button>
+                <button onclick="setSelectionMode('nodeToRoot')" id="nodeToRootMode" style="display: none;"
+                    title="Set selection mode to Node to Root: clicking a node selects it and all its ancestors up to the root">Node2Root</button>
+                <button onclick="setSelectionMode('nodeToTag')" id="nodeToTagMode" style="display: none;"
+                    title="Set selection mode to Node to Tag: clicking a node selects it and all its ancestors up to the first tagged node">Node2Tag</button>
+                <button onclick="setSelectionMode('box')" id="boxMode"
+                    title="Set selection mode to Box: click and drag to select multiple leaves within a rectangular area">Box
+                    Select</button>
 
-                        <select id="tagDropdown" style="display: inline-block;"
-                            title="Select a tag to apply to the selected nodes">
-                            <option value="Tag">Tag</option>
-                            <option value="NoTag">NoTag</option>
-                            <option value="HM">HM</option>
-                            <option value="Rec">Rec</option>
-                            <option value="MxL1">MxL1</option>
-                            <option value="MxL2">MxL2</option>
-                            <option value="MxL3">MxL3</option>
-                            <option value="MxL4">MxL4</option>
-                            <option value="MxL5">MxL5</option>
-                        </select>
-                        <button onclick="showTagDropdown()" title="Tag selected nodes" style="display: none;">Tag Selection </button>
-                        <button onclick="tagSelection('')" title="Remove tags from all currently selected nodes" style="display: none;">Tag
-                                None</button>
+            <!-- Third row: Tag controls 
+            <div style="display: flex; align-items: center; margin-bottom: 10px;"> -->
+                &nbsp;
+                <medium>Tag Selected: </medium>
+                <select id="tagDropdown" style="display: inline-block;"
+                    title="Select a tag to apply to the selected nodes">
+                    <option value="Tag">Tag</option>
+                    <option value="NoTag">NoTag</option>
+                    <option value="HM">HM</option>
+                    <option value="Rec">Rec</option>
+                    <option value="MxL1">MxL1</option>
+                    <option value="MxL2">MxL2</option>
+                    <option value="MxL3">MxL3</option>
+                    <option value="MxL4">MxL4</option>
+                    <option value="MxL5">MxL5</option>
+                </select>
+                <button onclick="clearSelection()" title="Accept tagging and clear current selection">Accept and Clear</button>
+                <button onclick="rejectTagsAndClearSelection()" title="Reject new tags, restore original tags, and clear selection">Revert and Clear</button>
+            </div>
 
-                        <button onclick="clearSelection()" title="Accept tagging and clear current selection">Accept and Clear</button>
-                        <button onclick="rejectTagsAndClearSelection()" title="Reject new tags, restore original tags, and clear selection">Revert and Clear</button>
+           
         </div>
         <div id="content-container">
             <div id="left-panel">
                 <div id="sliders-container" class="horizontal-slider-container">
                     <label for="scaleLineValue" title="Adjust the position of the scale line">Scale Line:</label>
-                    <input type="range" id="scaleLineValue" min="0" max="0.1" step="0.01" value="0.01"
+                    <input type="range" id="scaleLineValue" min="0.001" max="0.1" step="0.001" value="0.01"
                         title="Adjust the position of the scale line">
                     <span id="scaleLineValueDisplay">0.01</span>
 
@@ -493,7 +508,7 @@
             verticalScale = parseInt(document.getElementById('verticalScale').value);
             textSize = parseInt(document.getElementById('textSize').value);
             scaleLineValue = parseFloat(document.getElementById('scaleLineValue').value);
-            document.getElementById('scaleLineValueDisplay').textContent = scaleLineValue.toFixed(2);
+            document.getElementById('scaleLineValueDisplay').textContent = scaleLineValue.toFixed(3);
             draw(root);
         }
 
@@ -529,7 +544,7 @@
             ctx.font = '12px Arial';
             ctx.fillStyle = 'gray';
             ctx.textAlign = 'center';
-            ctx.fillText(scaleLineValue.toFixed(2), scaleLineX, canvas.height - 160);
+            ctx.fillText(scaleLineValue.toFixed(3), scaleLineX, canvas.height - 160);
 
             if (selectionMode === 'box' && isBoxSelecting && drawBoxStartX !== undefined) {
                 ctx.strokeStyle = 'rgba(0, 0, 255, 0.5)';
@@ -757,7 +772,7 @@
             scaleLabel.setAttribute("font-size", "12");
             scaleLabel.setAttribute("fill", "gray");
             scaleLabel.setAttribute("text-anchor", "middle");
-            scaleLabel.textContent = scaleLineValue.toFixed(2);
+            scaleLabel.textContent = scaleLineValue.toFixed(3);
             svg.appendChild(scaleLabel);
 
             // Draw alignment if it exists
@@ -1053,6 +1068,8 @@
                 reader.onload = function(e) {
                     document.getElementById('newickInput').value = e.target.result.trim();
                     drawTree();
+                    // Add this line to report diameter after loading new tree
+                    setTimeout(() => reportTreeDiameter(), 100);
                 };
                 reader.readAsText(file);
             }
@@ -1431,6 +1448,182 @@
         // Ensure the function is accessible globally
         window.exportNewick = exportNewick;
 
+        function calculateTreeDistance(node1, node2, treeRoot) {
+            // Use provided root or fall back to global root
+            const currentRoot = treeRoot || root;
+            
+            // Find the lowest common ancestor (LCA)
+            const path1 = getPathToRoot(node1, currentRoot);
+            const path2 = getPathToRoot(node2, currentRoot);
+            
+            let lca = null;
+            for (let i = 0; i < path1.length && i < path2.length; i++) {
+                if (path1[path1.length - 1 - i] !== path2[path2.length - 1 - i]) {
+                    lca = path1[path1.length - i];
+                    break;
+                }
+                lca = path1[path1.length - 1 - i];
+            }
+            
+            // Calculate distances from each node to LCA
+            const dist1 = calculateDistanceToAncestor(node1, lca);
+            const dist2 = calculateDistanceToAncestor(node2, lca);
+            
+            return dist1 + dist2;
+        }
+
+        function getPathToRoot(node, root) {
+            const path = [];
+            let current = node;
+            
+            while (current) {
+                path.push(current);
+                current = findParent(root, current);
+            }
+            
+            return path;
+        }
+
+        function calculateDistanceToAncestor(node, ancestor) {
+            let distance = 0;
+            let current = node;
+            
+            while (current && current !== ancestor) {
+                distance += current.length;
+                current = findParent(root, current);
+            }
+            
+            return distance;
+        }
+
+        function clusterLeavesByDistance() {
+            const leaves = getLeafNodes(root);
+            
+            // Create array of leaf objects with indices
+            const leafObjects = leaves.map((leaf, index) => ({
+                node: leaf,
+                index: index,
+                name: leaf.name
+            }));
+            
+            // Create distance function for DBSCAN
+            const distanceFunction = (a, b) => {
+                return calculateTreeDistance(a.node, b.node);
+            };
+            
+            // Initialize DBSCAN
+            const dbscan = new DBSCAN(leafObjects, 0.01, 5, distanceFunction);
+            
+            // Run clustering
+            const clusters = dbscan.run();
+            
+            // Format and log results
+            console.log('DBSCAN Clustering Results:');
+            clusters.forEach((cluster, i) => {
+                const clusterLeafNames = cluster.map(idx => leafObjects[idx].name);
+                console.log(`Cluster ${i + 1}: ${clusterLeafNames.join(', ')}`);
+            });
+            
+            // Log noise points if any
+            if (dbscan.noise.length > 0) {
+                const noiseLeafNames = dbscan.noise.map(idx => leafObjects[idx].name);
+                console.log(`Noise points: ${noiseLeafNames.join(', ')}`);
+            }
+        }
+
+        // Modify the reportTreeDiameter function to also run clustering
+        function reportTreeDiameter() {
+            const leaves = getLeafNodes(root);
+            let maxDistance = 0;
+            let furthestPair = null;
+            
+            for (let i = 0; i < leaves.length; i++) {
+                for (let j = i + 1; j < leaves.length; j++) {
+                    const distance = calculateTreeDistance(leaves[i], leaves[j]);
+                    if (distance > maxDistance) {
+                        maxDistance = distance;
+                        furthestPair = [leaves[i], leaves[j]];
+                    }
+                }
+            }
+            
+            console.log(`Tree diameter: ${maxDistance}`);
+            console.log(`Furthest leaves: ${furthestPair[0].name} and ${furthestPair[1].name}`);
+            
+            // Run DBSCAN clustering
+            clusterLeavesByDistance();
+            
+            return maxDistance;
+        }
+
+        function updateEpsilonDisplay() {
+            const epsilon = document.getElementById('epsilonValue').value;
+            document.getElementById('epsilonValueDisplay').textContent = parseFloat(epsilon).toFixed(3);
+        }
+
+        function updateMinPtsDisplay() {
+            const minPts = document.getElementById('minPtsValue').value;
+            document.getElementById('minPtsValueDisplay').textContent = minPts;
+        }
+
+        function runDBSCAN() {
+            const epsilon = parseFloat(document.getElementById('epsilonValue').value);
+            const minPts = parseInt(document.getElementById('minPtsValue').value);
+            
+            // Update scale line to match epsilon
+            document.getElementById('scaleLineValue').value = epsilon;
+            document.getElementById('scaleLineValueDisplay').textContent = epsilon.toFixed(3);
+            scaleLineValue = epsilon;
+            
+            const leaves = getLeafNodes(root);
+            
+            // Create array of leaf objects with indices
+            const leafObjects = leaves.map((leaf, index) => ({
+                node: leaf,
+                index: index,
+                name: leaf.name
+            }));
+            
+            // Create distance function for DBSCAN
+            const distanceFunction = (a, b) => {
+                return calculateTreeDistance(a.node, b.node);
+            };
+            
+            // Initialize DBSCAN with user-selected parameters
+            const dbscan = new DBSCAN(leafObjects, epsilon, minPts, distanceFunction);
+            
+            // Run clustering
+            const clusters = dbscan.run();
+            
+            // Clear existing tags
+            leaves.forEach(leaf => {
+                leaf.tag = '';
+            });
+            
+            // Apply cluster tags (MxL1, MxL2, etc.)
+            clusters.forEach((cluster, i) => {
+                const clusterTag = `MxL${i + 1}`;
+                cluster.forEach(idx => {
+                    leafObjects[idx].node.tag = clusterTag;
+                });
+                
+                // Log cluster results
+                const clusterLeafNames = cluster.map(idx => leafObjects[idx].name);
+                console.log(`Cluster ${i + 1} (${clusterTag}): ${clusterLeafNames.join(', ')}`);
+            });
+            
+            // Tag noise points as "HM"
+            if (dbscan.noise.length > 0) {
+                dbscan.noise.forEach(idx => {
+                    leafObjects[idx].node.tag = 'HM';
+                });
+                const noiseLeafNames = dbscan.noise.map(idx => leafObjects[idx].name);
+                console.log(`Noise points (HM): ${noiseLeafNames.join(', ')}`);
+            }
+            
+            // Redraw the tree to show the new tags and updated scale line
+            draw(root);
+        }
 
         document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('horizontalScale').addEventListener('input', updateScales);
@@ -1453,6 +1646,12 @@
             if (exportNewickButton) {
         exportNewickButton.addEventListener('click', exportNewick);
     }
+
+            // Add this line to report the diameter after initial tree drawing
+            setTimeout(() => reportTreeDiameter(), 100);
+
+            document.getElementById('epsilonValue').addEventListener('input', updateEpsilonDisplay);
+            document.getElementById('minPtsValue').addEventListener('input', updateMinPtsDisplay);
         });
 
     </script>
