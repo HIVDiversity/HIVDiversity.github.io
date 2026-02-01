@@ -1,0 +1,4105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FASTA Compliance: View and Analyze FASTA Files</title>
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --panel-bg: #ffffff;
+            --border-color: #d1d5db;
+            --primary: #2563eb;
+            --header-height: 90px;
+            --ruler-height: 30px; 
+            --names-width: 200px;
+        }
+
+        * { box-sizing: border-box; }
+
+        body, html {
+            margin: 0; padding: 0;
+            height: 100%; width: 100%;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            overflow: hidden;
+            user-select: none;
+            overscroll-behavior-x: none;
+        }
+
+        #app {
+            display: flex; flex-direction: column;
+            height: 100vh; width: 100vw;
+        }
+
+        #controls {
+            height: var(--header-height);
+            background: var(--panel-bg);
+            border-bottom: 1px solid var(--border-color);
+            display: flex; align-items: center;
+            padding: 0 20px; gap: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            flex-shrink: 0; z-index: 20;
+            overflow-x: auto;
+        }
+
+        .control-group { display: flex; flex-direction: column; gap: 4px; }
+        label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #6b7280; }
+        button, select, input[type="file"] {
+            padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 4px;
+            background: white; font-size: 13px; cursor: pointer;
+            white-space: nowrap;
+        }
+        button:hover { background-color: #f3f4f6; }
+        button.active { background-color: var(--primary); color: white; border-color: var(--primary); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        #viewer-grid {
+            flex: 1; display: grid;
+            grid-template-columns: var(--names-width) 5px var(--names-width) 5px minmax(0, 1fr);
+            grid-template-rows: var(--ruler-height) minmax(0, 1fr);
+            grid-template-areas: 
+                "corner-names resizer-names corner-names-new resizer-names-new ruler" 
+                "names        resizer-names names-new        resizer-names-new seq";
+            overflow: hidden; position: relative;
+            background: #fff;
+        }
+
+        #area-corner-names { grid-area: corner-names; background: #f3f4f6; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+
+        #area-ruler {
+            grid-area: ruler; background: #f3f4f6;
+            border-bottom: 1px solid var(--border-color);
+            position: relative; overflow: hidden;
+        }
+
+        #resizer-names {
+            grid-area: resizer-names; background: #f3f4f6;
+            border-right: 1px solid var(--border-color);
+            cursor: col-resize; z-index: 15;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #resizer-names:hover { background: #d1d5db; }
+        #resizer-names::after { content: ''; width: 1px; height: 20px; background: #9ca3af; }
+
+        #area-names {
+            grid-area: names; background: #fff;
+            border-right: 1px solid var(--border-color);
+            position: relative; overflow: auto; z-index: 5;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+        }
+
+        #area-corner-names-new { grid-area: corner-names-new; background: #f3f4f6; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+
+        #resizer-names-new {
+            grid-area: resizer-names-new; background: #f3f4f6;
+            border-right: 1px solid var(--border-color);
+            cursor: col-resize; z-index: 15;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #resizer-names-new:hover { background: #d1d5db; }
+        #resizer-names-new::after { content: ''; width: 1px; height: 20px; background: #9ca3af; }
+
+        #area-names-new {
+            grid-area: names-new; background: #fff;
+            border-right: 1px solid var(--border-color);
+            position: relative; overflow: auto; z-index: 5;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+        }
+
+        #area-seq {
+            grid-area: seq; overflow: auto; position: relative;
+            background: #fff; outline: none; cursor: text;
+        }
+        #area-seq.grabbing { cursor: grabbing; }
+
+        canvas { display: block; }
+        #cvs-seq { position: sticky; top: 0; left: 0; pointer-events: none; }
+        #scroll-sizer { position: absolute; top: 0; left: 0; width: 1px; height: 1px; }
+
+        #overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.75);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            z-index: 9999; opacity: 0; pointer-events: none; transition: opacity 0.2s;
+        }
+        #overlay.active { opacity: 1; pointer-events: all; }
+        
+        .spinner {
+            width: 30px; height: 30px;
+            border: 3px solid #e5e7eb; border-top: 3px solid var(--primary);
+            border-radius: 50%; animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        #group-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;
+        }
+        .help-box {
+            background: white; width: 450px; max-width: 90%; 
+            padding: 20px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        .help-box h2 { margin: 0 0 10px 0; font-size: 18px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .help-row { display: flex; justify-content: space-between; font-size: 13px; color: #374151; padding: 5px 0; }
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <div id="controls">
+        <div class="control-group">
+            <label>FASTA FILE</label>
+            <input type="file" id="inp-file" accept=".fasta,.fa,.fastq,.fq,.txt" style="position: absolute; width: 0; height: 0; opacity: 0; overflow: hidden;">
+            <label for="inp-file" style="padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 4px; background: white; font-size: 13px; cursor: pointer; white-space: nowrap; display: inline-block; text-transform: none;">Choose</label>
+        </div>
+        
+        <div class="control-group">
+            <label>Sort</label>
+            <button id="btn-sort-sequences" title="Sort sequences by name">Sort</button>
+        </div>
+
+        <div class="control-group">
+            <label>Group</label>
+            <button id="btn-group-sequences" title="Group sequences by name field">Group</button>
+        </div>
+
+        <div class="control-group">
+            <label>Validate</label>
+            <button id="btn-validate" title="Validate filename and sequence names against naming convention" disabled>Validate</button>
+        </div>
+
+        <div class="control-group">
+            <label>Parse</label>
+            <button id="btn-parse" title="Parse and display filename and sequence name components" disabled>Parse</button>
+        </div>
+
+        <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
+
+        <div class="control-group">
+            <label>EXPORT</label>
+            <div style="display: flex; gap: 5px;">
+                <button id="btn-download" title="Download Current View" disabled>fasta</button>
+                <button id="btn-export-settings" title="Export transformation settings to JSON file" disabled>json</button>
+            </div>
+        </div>
+
+        <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
+        
+        <div class="control-group" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+            <label style="font-size: 11px; color: #6b7280;">Current Delimiters</label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <label style="font-size: 11px; text-transform: none;">Field:</label>
+                    <input type="text" id="inp-field-delimiter" value="_" style="width: 40px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; text-align: center;" maxlength="1">
+                </div>
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <label style="font-size: 11px; text-transform: none;">Subfield:</label>
+                    <input type="text" id="inp-subfield-delimiter" value="-" style="width: 40px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; text-align: center;" maxlength="1">
+                </div>
+            </div>
+        </div>
+        
+        <div class="control-group" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+            <label style="font-size: 11px; color: #6b7280;">New Delimiters</label>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <label style="font-size: 11px; text-transform: none;">Field:</label>
+                    <input type="text" id="inp-new-field-delimiter" value="_" style="width: 40px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; text-align: center;" maxlength="1">
+                </div>
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <label style="font-size: 11px; text-transform: none;">Subfield:</label>
+                    <input type="text" id="inp-new-subfield-delimiter" value="-" style="width: 40px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px; text-align: center;" maxlength="1">
+                </div>
+            </div>
+        </div>
+        
+        <div class="control-group">
+            <label>Legend</label>
+            <button id="btn-show-legend" title="Show field legend">Legend</button>
+        </div>
+        
+        <div style="width:1px; height:30px; background:#e5e7eb; margin:0 10px;"></div>
+
+        <div class="control-group">
+            <label>View Mode</label>
+            <div style="display:flex;">
+                <button id="btn-nt" class="active" style="border-top-right-radius:0; border-bottom-right-radius:0;">NT</button>
+                <button id="btn-aa" style="border-top-left-radius:0; border-bottom-left-radius:0; border-left:none;">AA</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label>Highlighter</label>
+            <select id="sel-highlight" style="min-width: 120px;">
+                <option value="" selected>Off</option>
+                <option value="reference">Reference</option>
+            </select>
+        </div>
+    </div>
+    <div id="filename-display" style="padding: 8px 20px; font-size: 16px; color: #111827; border-top: 1px solid var(--border-color);">
+        <div><strong style="font-family: 'Courier New', monospace;">Cur File:</strong> <span id="filename-text" style="font-family: 'Courier New', monospace; color: #111827;">no file loaded yet</span></div>
+        <div style="margin-top: 4px;"><strong style="font-family: 'Courier New', monospace;">New File:</strong> <span id="filename-new-text" style="font-family: 'Courier New', monospace; color: #111827;">no file loaded yet</span></div>
+    </div>
+
+    <div id="viewer-grid">
+        <div id="area-corner-names"></div>
+        <div id="resizer-names"></div>
+        <div id="area-corner-names-new"></div>
+        <div id="resizer-names-new"></div>
+        
+        <div id="area-ruler"><canvas id="cvs-ruler"></canvas></div>
+        <div id="area-names"><canvas id="cvs-names"></canvas></div>
+        <div id="area-names-new"><canvas id="cvs-names-new"></canvas></div>
+        <div id="area-seq" tabindex="0"><div id="scroll-sizer"></div><canvas id="cvs-seq"></canvas></div>
+    </div>
+</div>
+
+<div id="overlay">
+    <div class="spinner"></div>
+    <div id="overlay-msg" style="margin-top:10px; font-weight:500;">Processing...</div>
+</div>
+
+<div id="field-legend-popup" style="position: fixed; top: 100px; right: 20px; background: white; border: 1px solid #d1d5db; border-radius: 8px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 5000; display: none; max-width: 375px; font-size: 12px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <button id="btn-apply-transformations" style="padding: 6px 12px; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;">Apply</button>
+        <button onclick="document.getElementById('field-legend-popup').style.display='none'" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #6b7280;">×</button>
+    </div>
+    <div id="legend-filename-section" style="margin-bottom: 15px;">
+        <div style="font-weight: 600; color: #374151; margin-bottom: 8px;">Filename:</div>
+        <button id="btn-filename-help" style="margin-bottom: 8px; padding: 2px 8px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; font-size: 11px; color: #6b7280; font-weight: 600;">?</button>
+        <div id="legend-filename-content"></div>
+    </div>
+    <div id="legend-sequences-section">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+            <div style="font-weight: 600; color: #374151;">Sequence Names:</div>
+            <div style="display: flex; align-items: center; gap: 5px;">
+                <label style="font-size: 11px; color: #6b7280; text-transform: none;">Skip:</label>
+                <input type="number" id="inp-skip-sequences" value="0" min="0" style="width: 50px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 3px; font-size: 11px; text-align: center;">
+            </div>
+        </div>
+        <button id="btn-sequence-help" style="margin-bottom: 8px; padding: 2px 8px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer; font-size: 11px; color: #6b7280; font-weight: 600;">?</button>
+        <div id="legend-sequences-content"></div>
+    </div>
+</div>
+
+<div id="group-overlay">
+    <div class="help-box">
+        <h2>Group Sequences</h2>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Delimiter Character</label>
+            <input type="text" id="inp-group-delimiter" value="_" maxlength="1" style="width: 100%; padding: 5px; font-size: 13px;">
+        </div>
+        <div class="help-row" style="flex-direction: column; align-items: flex-start; gap: 5px; margin-top: 10px;">
+            <label style="text-transform: none; font-size: 13px; color: #374151;">Field Number (1-indexed, after splitting by delimiter)</label>
+            <input type="number" id="inp-group-field" value="3" min="1" style="width: 100%; padding: 5px; font-size: 13px;">
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button onclick="document.getElementById('group-overlay').style.display='none'">Cancel</button>
+            <button id="btn-run-group" class="active">Group</button>
+        </div>
+    </div>
+</div>
+
+<div id="validation-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="help-box" style="width: 700px; max-height: 80vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2 style="margin: 0;">Validation Results</h2>
+            <button id="btn-copy-validation" title="Copy results to clipboard" style="padding: 6px 12px; font-size: 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer;">Copy</button>
+        </div>
+        <div id="validation-results" style="font-family: monospace; font-size: 13px; white-space: pre-wrap; max-height: 60vh; overflow-y: auto; background: #f9fafb; padding: 15px; border-radius: 4px; border: 1px solid #e5e7eb; user-select: text;"></div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button onclick="document.getElementById('validation-overlay').style.display='none'" class="active">Close</button>
+        </div>
+    </div>
+</div>
+
+<div id="parse-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 10000;">
+    <div class="help-box" style="width: 800px; max-height: 80vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2 style="margin: 0;">Parse Results</h2>
+            <button id="btn-copy-parse" title="Copy results to clipboard" style="padding: 6px 12px; font-size: 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer;">Copy</button>
+        </div>
+        <div id="parse-results" style="font-family: monospace; font-size: 13px; white-space: pre-wrap; max-height: 60vh; overflow-y: auto; background: #f9fafb; padding: 15px; border-radius: 4px; border: 1px solid #e5e7eb; user-select: text;"></div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+            <button onclick="document.getElementById('parse-overlay').style.display='none'" class="active">Close</button>
+        </div>
+    </div>
+</div>
+
+<div id="filename-help-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 6000; display: none; align-items: center; justify-content: center;">
+    <div class="help-box" style="width: 600px; max-width: 90%; max-height: 80vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2 style="margin: 0;">Standard FASTA Filename Compliance Rules</h2>
+            <button onclick="document.getElementById('filename-help-overlay').style.display='none'" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #6b7280; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;">×</button>
+        </div>
+        <div style="line-height: 1.6; color: #374151;">
+            <h3 style="margin-top: 0; margin-bottom: 10px; color: #111827;">Required Fields (in order, separated by underscores _)</h3>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">NetworkProtocol (Field 1)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: [Network][Protocol]</li>
+                    <li>Network: 1 uppercase letter (A-Z)</li>
+                    <li>Protocol: 3-4 digits, optionally followed by 1 uppercase letter</li>
+                    <li>Example: V806, H123A</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">PTID (Field 2)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: 4-6 digits OR CAP### (where ### is 3 digits)</li>
+                    <li>Examples: 7822, 123456, CAP123</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">Visit (Field 3)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: 4 digits OR dash-separated 4-digit ranges</li>
+                    <li>Examples: 0050, 0050-0070, 0050-0070-0100</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">Region (Field 4)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Must be one of: env, pol, gag, nef, ren, gp</li>
+                    <li>Case-insensitive</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">Molecule (Field 5)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Must be one of: aa (amino acid) or nt (nucleotide)</li>
+                    <li>Case-insensitive</li>
+                </ul>
+            </div>
+            
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #111827;">Optional Fields (after required fields)</h3>
+            <p style="margin: 5px 0;">Optional fields use flags with format [flag]-[value]:</p>
+            <ul style="margin: 5px 0; padding-left: 20px;">
+                <li><strong>a-</strong> = alignment (e.g., a-maff)</li>
+                <li><strong>f-</strong> = filters (e.g., f-quality)</li>
+                <li><strong>m-</strong> = modifiers (e.g., m-normalized)</li>
+                <li><strong>w-</strong> = additions (e.g., w-reference)</li>
+                <li><strong>o-</strong> = removals (e.g., o-gaps)</li>
+                <li><strong>s-</strong> = sequencing (e.g., s-pb)</li>
+                <li><strong>p-</strong> = processing (e.g., p-cleaned)</li>
+                <li><strong>e-</strong> = extras (e.g., e-notes)</li>
+                <li><strong>r-</strong> = reviewed (e.g., r-reviewed)</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div id="sequence-help-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 6000; display: none; align-items: center; justify-content: center;">
+    <div class="help-box" style="width: 600px; max-width: 90%; max-height: 80vh; overflow-y: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2 style="margin: 0;">Standard FASTA Sequence Name Compliance Rules</h2>
+            <button onclick="document.getElementById('sequence-help-overlay').style.display='none'" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #6b7280; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;">×</button>
+        </div>
+        <div style="line-height: 1.6; color: #374151;">
+            <h3 style="margin-top: 0; margin-bottom: 10px; color: #111827;">Required Fields (in order, separated by underscores _)</h3>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">NetworkCohort (Field 1)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: [Network][Cohort]</li>
+                    <li>Network: 1 uppercase letter (A-Z)</li>
+                    <li>Cohort: remaining characters (digits/letters)</li>
+                    <li>Example: V806, H123A</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">PTID (Field 2)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: 4-6 digits OR CAP### (where ### is 3 digits)</li>
+                    <li>Examples: 7822, 123456, CAP123</li>
+                    <li>Must match the filename PTID</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">Visit (Field 3)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: 4 digits OR dash-separated 4-digit ranges</li>
+                    <li>Examples: 0050, 0050-0070, 0050-0070-0100</li>
+                    <li>Must match the filename visit</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">Region (Field 4)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Must be one of: env, pol, gag, nef, ren, gp</li>
+                    <li>Case-insensitive</li>
+                    <li>Must match the filename region</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <strong style="color: #111827;">SequencingMethodId (Field 5)</strong>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Format: [SequencingMethod] OR [SequencingMethod]-[SequenceId]</li>
+                    <li>Sequencing Method: must be one of: pb, sa, np, il, sy (case-insensitive)</li>
+                    <li>Sequence ID (if present): exactly 8 alphanumeric characters</li>
+                    <li>Examples: pb, pb-GTCATTTC, sa-12345678</li>
+                </ul>
+            </div>
+            
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #111827;">Optional Fields (after required fields)</h3>
+            <p style="margin: 5px 0;">Optional fields use flags with format [flag]-[value]:</p>
+            <ul style="margin: 5px 0; padding-left: 20px;">
+                <li><strong>p-</strong> = processing (e.g., p-cleaned)</li>
+                <li><strong>m-</strong> = modifiers (e.g., m-normalized)</li>
+                <li><strong>e-</strong> = extras (e.g., e-notes)</li>
+                <li><strong>coll-</strong> = collapsed (e.g., coll-merged)</li>
+            </ul>
+            
+            <h3 style="margin-top: 20px; margin-bottom: 10px; color: #111827;">Consistency Requirements</h3>
+            <p style="margin: 5px 0;">Sequence names must be consistent with the filename:</p>
+            <ul style="margin: 5px 0; padding-left: 20px;">
+                <li>Network must match filename network</li>
+                <li>PTID must match filename PTID</li>
+                <li>Visit must match filename visit</li>
+                <li>Region must match filename region</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<script>
+// --- Config ---
+const CONFIG = {
+    font: "14px 'Courier New', monospace",
+    labelFont: "12px 'Courier New', monospace",
+    charWidth: 12,
+    rowHeight: 24,
+    highlightMatchColor: '#ffffff',
+    rulerTickStep: 10,
+    colors: {
+        NT: { 
+            'A': '#81d4fa', 'G': '#fff176', 'C': '#a5d6a7', 'T': '#ff8a80', 'U': '#ff8a80', 
+            'R': '#e6ee9c', 'Y': '#80cbc4', 'M': '#a5d6a7', 'K': '#ef9a9a', 'S': '#c5e1a5', 
+            'W': '#ce93d8', 'H': '#81d4fa', 'B': '#ef9a9a', 'V': '#fff59d', 'D': '#ffcc80', 
+            'N': '#eeeeee',
+            '-': '#ffffff', 'default': '#f5f5f5' 
+        },
+        AA: { 'A': '#80a0f0', 'R': '#f01505', 'N': '#00ff00', 'D': '#c048c0', 'C': '#f08080', 'Q': '#00ff00', 'E': '#c048c0', 'G': '#f09048', 'H': '#15a4a4', 'I': '#80a0f0', 'L': '#80a0f0', 'K': '#f01505', 'M': '#80a0f0', 'F': '#80a0f0', 'P': '#ffff00', 'S': '#00ff00', 'T': '#00ff00', 'W': '#80a0f0', 'Y': '#15a4a4', 'V': '#80a0f0', '*': '#999999', '-': '#ffffff', 'default': '#ffffff' }
+    }
+};
+
+const COLOR_PALETTE = [
+    '#3b82f6', // Blue
+    '#10b981', // Green
+    '#f59e0b', // Amber
+    '#8b5cf6', // Purple
+    '#ec4899', // Pink
+    '#84cc16', // Lime
+    '#f97316', // Orange
+    '#6366f1', // Indigo
+    '#14b8a6', // Teal
+    '#ef4444', // Red
+];
+
+const GROUP_LIGHT_BG = [
+    '#dbeafe', // Light blue
+    '#d1fae5', // Light green
+    '#fef3c7', // Light amber
+    '#ede9fe', // Light purple
+    '#fce7f3', // Light pink
+    '#ecfccb', // Light lime
+    '#fed7aa', // Light orange
+    '#e0e7ff', // Light indigo
+    '#ccfbf1', // Light teal
+    '#fee2e2', // Light red
+];
+
+// Field color palette for field/subfield highlighting (darker colors)
+const FIELD_COLORS = [
+    '#90caf9', // Medium blue
+    '#ce93d8', // Medium purple
+    '#ffb74d', // Medium orange
+    '#81c784', // Medium green
+    '#f48fb1', // Medium pink
+    '#4db6ac', // Medium teal
+    '#fff176', // Medium yellow
+    '#aed581', // Medium lime
+    '#9575cd', // Medium deep purple
+    '#ba68c8', // Medium purple accent
+];
+
+const CODON_TABLE = {
+    'ATA':'I', 'ATC':'I', 'ATT':'I', 'ATG':'M', 'ACA':'T', 'ACC':'T', 'ACG':'T', 'ACT':'T',
+    'AAC':'N', 'AAT':'N', 'AAA':'K', 'AAG':'K', 'AGC':'S', 'AGT':'S', 'AGA':'R', 'AGG':'R',
+    'CTA':'L', 'CTC':'L', 'CTG':'L', 'CTT':'L', 'CCA':'P', 'CCC':'P', 'CCG':'P', 'CCT':'P',
+    'CAC':'H', 'CAT':'H', 'CAA':'Q', 'CAG':'Q', 'CGA':'R', 'CGC':'R', 'CGG':'R', 'CGT':'R',
+    'GTA':'V', 'GTC':'V', 'GTG':'V', 'GTT':'V', 'GCA':'A', 'GCC':'A', 'GCG':'A', 'GCT':'A',
+    'GAC':'D', 'GAT':'D', 'GAA':'E', 'GAG':'E', 'GGA':'G', 'GGC':'G', 'GGG':'G', 'GGT':'G',
+    'TCA':'S', 'TCC':'S', 'TCG':'S', 'TCT':'S', 'TTC':'F', 'TTT':'F', 'TTA':'L', 'TTG':'L',
+    'TAC':'Y', 'TAT':'Y', 'TAA':'*', 'TAG':'*', 'TGC':'C', 'TGT':'C', 'TGA':'*', 'TGG':'W',
+};
+
+// ============================================================================
+// FASTA Naming Convention - JavaScript Implementation
+// Mirrors py/fasta_naming.py structure for maintainability
+// ============================================================================
+
+// --- Global Validation Constants ---
+const NETWORK_PATTERN = /^[A-Z]$/;
+const PROTOCOL_PATTERN = /^\d{3,4}[A-Z]?$/;
+const PTID_PATTERN = /^(CAP\d{3}|\d{4,6})$/;
+const VISIT_PATTERN = /^\d{4}(-\d{4})*$/;
+const SEQUENCE_ID_PATTERN = /^\w{8}$/;
+
+const VALID_REGIONS = ['env', 'pol', 'gag', 'nef', 'ren', 'gp'];
+const VALID_MOLECULES = ['aa', 'nt'];
+const VALID_SEQUENCING_METHODS = ['pb', 'sa', 'np', 'il', 'sy'];
+
+const OPTIONAL_FIELD_FLAGS = {
+    'a': 'alignment',
+    'f': 'filters',
+    'm': 'modifiers',
+    'w': 'additions',
+    'o': 'removals',
+    's': 'sequencing',
+    'p': 'processing',
+    'e': 'extras',
+    'r': 'reviewed'
+};
+
+// --- Naming Convention Definitions ---
+// Each convention defines how to format filenames and sequence IDs
+const NAMING_CONVENTIONS = {
+    'standard': {
+        name: 'Standard',
+        filename: {
+            fields: ['networkProtocol', 'ptid', 'visit', 'region', 'molecule'],
+            separator: '_',
+            includeOptional: true, // Can be true, false, or array of flags
+            formatField: (fieldName, value, filenameObj) => {
+                if (fieldName === 'networkProtocol') {
+                    return `${filenameObj.network}${filenameObj.protocol}`;
+                }
+                return value;
+            }
+        },
+        sequence: {
+            fields: ['networkCohort', 'ptid', 'visit', 'region', 'sequencingMethodId'],
+            separator: '_',
+            formatField: (fieldName, value, seqName) => {
+                if (fieldName === 'networkCohort') {
+                    return `${seqName.network}${seqName.cohort}`;
+                }
+                if (fieldName === 'sequencingMethodId') {
+                    return seqName.sequenceId ? `${seqName.sequencingMethod}-${seqName.sequenceId}` : seqName.sequencingMethod;
+                }
+                return value;
+            },
+            includeOptional: true // Include optional fields like processing, modifiers, etc.
+        }
+    }
+};
+
+// --- Helper Functions ---
+function _formatOptionalField(flag, fieldData) {
+    // Format optional field dictionary into string representation
+    // Example: {'main': 'maff', 'sub': [], 'subsub': {}} -> "a-maff"
+    const parts = [`${flag}-${fieldData.main}`];
+    
+    // Add subcategories
+    for (const sub of (fieldData.sub || [])) {
+        if (fieldData.subsub && fieldData.subsub[sub]) {
+            // Has subsubcategories
+            const subsubParts = fieldData.subsub[sub].join('+');
+            parts.push(`${sub}+${subsubParts}`);
+        } else {
+            // No subsubcategories
+            parts.push(sub);
+        }
+    }
+    
+    // Add subsub entries that don't have explicit sub entries
+    if (fieldData.subsub) {
+        for (const [key, values] of Object.entries(fieldData.subsub)) {
+            if (key === fieldData.main && !(fieldData.sub || []).includes(key)) {
+                // subsubcategories directly attached to main
+                const subsubStr = values.join('+');
+                parts[0] += `+${subsubStr}`;
+            }
+        }
+    }
+    
+    return parts.join('-');
+}
+
+function _parseOptionalField(fieldStr) {
+    // Parse optional field string into structured dictionary
+    // Example: "a-maff" -> {'main': 'maff', 'sub': [], 'subsub': {}}
+    if (!fieldStr.includes('-')) {
+        throw new Error(`Invalid optional field format: ${fieldStr}`);
+    }
+    
+    const content = fieldStr.split('-').slice(1).join('-'); // Remove flag, keep everything after first dash
+    const parts = content.split('-');
+    
+    const result = {
+        main: '',
+        sub: [],
+        subsub: {}
+    };
+    
+    // First part might contain main+subsub (e.g., "rw+CB+AG")
+    if (parts[0].includes('+')) {
+        const mainParts = parts[0].split('+');
+        result.main = mainParts[0];
+        result.subsub[mainParts[0]] = mainParts.slice(1);
+    } else {
+        result.main = parts[0];
+    }
+    
+    // Process remaining parts (subcategories)
+    for (const part of parts.slice(1)) {
+        if (part.includes('+')) {
+            // Subcategory with subsubcategories
+            const subParts = part.split('+');
+            const subName = subParts[0];
+            result.sub.push(subName);
+            result.subsub[subName] = subParts.slice(1);
+        } else {
+            // Simple subcategory
+            result.sub.push(part);
+        }
+    }
+    
+    return result;
+}
+
+// --- Data Classes ---
+class FastaFileName {
+    constructor(network, protocol, ptid, visit, region, molecule, optionalFields = {}) {
+        this.network = network;
+        this.protocol = protocol;
+        this.ptid = ptid;
+        this.visit = visit;
+        this.region = region;
+        this.molecule = molecule;
+        
+        // Optional fields
+        this.alignment = optionalFields.alignment || null;
+        this.filters = optionalFields.filters || null;
+        this.modifiers = optionalFields.modifiers || null;
+        this.additions = optionalFields.additions || null;
+        this.removals = optionalFields.removals || null;
+        this.sequencing = optionalFields.sequencing || null;
+        this.processing = optionalFields.processing || null;
+        this.extras = optionalFields.extras || null;
+        this.reviewed = optionalFields.reviewed || null;
+        
+        this.validate();
+    }
+    
+    validate() {
+        // Network validation (skip if empty - used for conventions that don't include network)
+        if (this.network && !NETWORK_PATTERN.test(this.network)) {
+            throw new Error(`Invalid network '${this.network}': must be 1 uppercase letter`);
+        }
+        
+        // Protocol validation (skip if empty - used for conventions that don't include protocol)
+        if (this.protocol && !PROTOCOL_PATTERN.test(this.protocol)) {
+            throw new Error(`Invalid protocol '${this.protocol}': must be 3-4 characters`);
+        }
+        
+        // PTID validation
+        if (!PTID_PATTERN.test(this.ptid)) {
+            throw new Error(`Invalid PTID '${this.ptid}': must be 4-6 digits or CAP### format`);
+        }
+        
+        // Visit validation
+        if (!VISIT_PATTERN.test(this.visit)) {
+            throw new Error(`Invalid visit '${this.visit}': must be 4 digits or dash-separated`);
+        }
+        
+        // Region validation
+        if (!VALID_REGIONS.includes(this.region.toLowerCase())) {
+            throw new Error(`Invalid region '${this.region}': must be one of ${VALID_REGIONS.join(', ')}`);
+        }
+        
+        // Molecule validation
+        if (!VALID_MOLECULES.includes(this.molecule.toLowerCase())) {
+            throw new Error(`Invalid molecule '${this.molecule}': must be one of ${VALID_MOLECULES.join(', ')}`);
+        }
+    }
+    
+    toFilename(convention = 'standard', includeOptional = false) {
+        if (!NAMING_CONVENTIONS[convention]) {
+            throw new Error(`Unknown naming convention: ${convention}`);
+        }
+        
+        const conv = NAMING_CONVENTIONS[convention];
+        const parts = [];
+        
+        // Build parts based on convention definition
+        for (const fieldName of conv.filename.fields) {
+            let value;
+            if (fieldName === 'networkProtocol') {
+                value = `${this.network}${this.protocol}`;
+            } else {
+                value = this[fieldName];
+            }
+            
+            if (conv.filename.formatField) {
+                value = conv.filename.formatField(fieldName, value, this);
+            }
+            
+            if (value !== undefined && value !== null && value !== '') {
+                parts.push(value);
+            }
+        }
+        
+        // Add optional fields if specified
+        if (conv.filename.includeOptional) {
+            const includeFlags = Array.isArray(conv.filename.includeOptional) 
+                ? conv.filename.includeOptional 
+                : (conv.filename.includeOptional === true ? Object.keys(OPTIONAL_FIELD_FLAGS) : []);
+            
+            if (includeOptional === true || (Array.isArray(includeOptional) && includeOptional.length > 0)) {
+                const flagsToInclude = includeOptional === true 
+                    ? includeFlags 
+                    : includeOptional.filter(f => includeFlags.includes(f));
+                
+                for (const flag of ['a', 'f', 'm', 'w', 'o', 's', 'p', 'e', 'r']) {
+                    if (flagsToInclude.includes(flag)) {
+                        const fieldName = OPTIONAL_FIELD_FLAGS[flag];
+                        const fieldValue = this[fieldName];
+                        if (fieldValue) {
+                            parts.push(_formatOptionalField(flag, fieldValue));
+                        }
+                    }
+                }
+            }
+        }
+        
+        return parts.join(conv.filename.separator) + '.fasta';
+    }
+}
+
+class SequenceName {
+    constructor(network, cohort, ptid, visit, region, sequencingMethod, sequenceId, optionalFields = {}) {
+        this.network = network;
+        this.cohort = cohort;
+        this.ptid = ptid;
+        this.visit = visit;
+        this.region = region;
+        this.sequencingMethod = sequencingMethod;
+        this.sequenceId = sequenceId || '';
+        
+        // Optional fields
+        this.processing = optionalFields.processing || null;
+        this.modifiers = optionalFields.modifiers || null;
+        this.extras = optionalFields.extras || null;
+        this.collapsed = optionalFields.collapsed || null;
+        
+        this.validate();
+    }
+    
+    validate() {
+        // Network validation (skip if empty - used for conventions that don't include network)
+        if (this.network && !NETWORK_PATTERN.test(this.network)) {
+            throw new Error(`Invalid network '${this.network}': must be 1 uppercase letter`);
+        }
+        
+        // Sequencing method validation (skip if empty - used for conventions that don't include sequencing method)
+        if (this.sequencingMethod && !VALID_SEQUENCING_METHODS.includes(this.sequencingMethod.toLowerCase())) {
+            throw new Error(`Invalid sequencing method '${this.sequencingMethod}': must be one of ${VALID_SEQUENCING_METHODS.join(', ')}`);
+        }
+        
+        // Sequence ID validation (optional for collapsed sequences)
+        if (this.sequenceId && !this.collapsed) {
+            if (!SEQUENCE_ID_PATTERN.test(this.sequenceId)) {
+                throw new Error(`Invalid sequence ID '${this.sequenceId}': must be 8 characters`);
+            }
+        }
+    }
+    
+    toSequenceId(convention = 'standard') {
+        if (!NAMING_CONVENTIONS[convention]) {
+            throw new Error(`Unknown naming convention: ${convention}`);
+        }
+        
+        const conv = NAMING_CONVENTIONS[convention];
+        const parts = [];
+        
+        // Build parts based on convention definition
+        for (const fieldName of conv.sequence.fields) {
+            let value;
+            
+            // Map field names to actual properties
+            if (fieldName === 'networkCohort') {
+                value = `${this.network}${this.cohort}`;
+            } else if (fieldName === 'sequencingMethodId') {
+                value = this.sequenceId ? `${this.sequencingMethod}-${this.sequenceId}` : this.sequencingMethod;
+            } else {
+                value = this[fieldName];
+            }
+            
+            // Apply custom formatting if defined
+            if (conv.sequence.formatField) {
+                value = conv.sequence.formatField(fieldName, value, this);
+            }
+            
+            if (value !== undefined && value !== null && value !== '') {
+                parts.push(value);
+            }
+        }
+        
+        // Add optional fields if specified
+        if (conv.sequence.includeOptional) {
+            if (this.collapsed) parts.push(this.collapsed);
+            if (this.processing) parts.push(this.processing);
+            if (this.modifiers) parts.push(this.modifiers);
+            if (this.extras) parts.push(this.extras);
+        }
+        
+        return parts.join(conv.sequence.separator);
+    }
+}
+
+// --- Convention Helper Functions (Data-Driven) ---
+function applyNamingConvention(seqName, convention = 'standard') {
+    // Use data-driven convention definition instead of procedural if/elif
+    if (!NAMING_CONVENTIONS[convention]) {
+        throw new Error(`Unknown naming convention: ${convention}`);
+    }
+    
+    return seqName.toSequenceId(convention);
+}
+
+function generateFilename(filenameObj, convention = 'standard', includeOptional = false) {
+    // Use data-driven convention definition instead of procedural if/elif
+    if (!NAMING_CONVENTIONS[convention]) {
+        throw new Error(`Unknown naming convention: ${convention}`);
+    }
+    
+    return filenameObj.toFilename(convention, includeOptional);
+}
+
+// --- Parser Functions ---
+function parseFastaFilename(filename) {
+    // Remove .fasta extension if present
+    let name = filename.replace(/\.fasta$/, '');
+    
+    // Split by underscore
+    const parts = name.split('_');
+    
+    if (parts.length < 5) {
+        throw new Error(`Filename has too few parts: expected at least 5, got ${parts.length}`);
+    }
+    
+    // Parse obligate fields
+    const networkProtocol = parts[0];
+    const network = networkProtocol[0];
+    const protocol = networkProtocol.slice(1);
+    
+    const ptid = parts[1];
+    const visit = parts[2];
+    const region = parts[3];
+    const molecule = parts[4];
+    
+    // Validate required fields first (in order) before parsing optional fields
+    const requiredFieldErrors = [];
+    
+    // Validate networkProtocol (Field 1)
+    if (!NETWORK_PATTERN.test(network)) {
+        requiredFieldErrors.push(`Invalid network '${network}': must be 1 uppercase letter`);
+    }
+    if (protocol && !PROTOCOL_PATTERN.test(protocol)) {
+        requiredFieldErrors.push(`Invalid protocol '${protocol}': must be 3-4 digits, optionally followed by 1 uppercase letter`);
+    }
+    
+    // Validate PTID (Field 2)
+    if (!PTID_PATTERN.test(ptid)) {
+        requiredFieldErrors.push(`Invalid PTID '${ptid}': must be 4-6 digits or CAP### format`);
+    }
+    
+    // Validate Visit (Field 3)
+    if (!VISIT_PATTERN.test(visit)) {
+        requiredFieldErrors.push(`Invalid visit '${visit}': must be 4 digits or dash-separated`);
+    }
+    
+    // Validate Region (Field 4)
+    if (!VALID_REGIONS.includes(region.toLowerCase())) {
+        requiredFieldErrors.push(`Invalid region '${region}': must be one of ${VALID_REGIONS.join(', ')}`);
+    }
+    
+    // Validate Molecule (Field 5)
+    if (!VALID_MOLECULES.includes(molecule.toLowerCase())) {
+        requiredFieldErrors.push(`Invalid molecule '${molecule}': must be one of ${VALID_MOLECULES.join(', ')}`);
+    }
+    
+    // If any required field errors, throw them first (don't check optional fields yet)
+    if (requiredFieldErrors.length > 0) {
+        throw new Error(requiredFieldErrors[0]); // Report first required field error
+    }
+    
+    // Parse optional fields by flag (only if required fields are valid)
+    // All fields after the required 5 must start with a valid flag
+    const optionalFields = {};
+    const optionalFieldErrors = [];
+    const validFlags = ['a', 'f', 'm', 'w', 'o', 's', 'p', 'e', 'r'];
+    for (const part of parts.slice(5)) {
+        // Check if this part starts with a valid flag
+        const hasValidFlag = validFlags.some(flag => part.startsWith(flag + '-'));
+        if (!hasValidFlag) {
+            optionalFieldErrors.push(`Invalid optional field '${part}': optional fields must start with a valid flag (a-, f-, m-, w-, o-, s-, p-, e-, or r-)`);
+            continue; // Skip this invalid optional field, continue checking others
+        }
+        
+        if (part.startsWith('a-')) {
+            optionalFields.alignment = _parseOptionalField(part);
+        } else if (part.startsWith('f-')) {
+            optionalFields.filters = _parseOptionalField(part);
+        } else if (part.startsWith('m-')) {
+            optionalFields.modifiers = _parseOptionalField(part);
+        } else if (part.startsWith('w-')) {
+            optionalFields.additions = _parseOptionalField(part);
+        } else if (part.startsWith('o-')) {
+            optionalFields.removals = _parseOptionalField(part);
+        } else if (part.startsWith('s-')) {
+            optionalFields.sequencing = _parseOptionalField(part);
+        } else if (part.startsWith('p-')) {
+            optionalFields.processing = _parseOptionalField(part);
+        } else if (part.startsWith('e-')) {
+            optionalFields.extras = _parseOptionalField(part);
+        } else if (part.startsWith('r-')) {
+            optionalFields.reviewed = _parseOptionalField(part);
+        }
+    }
+    
+    // If there are optional field errors, throw them (but only after required fields are valid)
+    if (optionalFieldErrors.length > 0) {
+        throw new Error(optionalFieldErrors[0]); // Report first optional field error
+    }
+    
+    // Create FastaFileName object (it will validate again, but we've already checked required fields)
+    return new FastaFileName(network, protocol, ptid, visit, region, molecule, optionalFields);
+}
+
+function parseSequenceName(seqId) {
+    const parts = seqId.split('_');
+    
+    if (parts.length < 5) {
+        throw new Error(`Sequence ID has too few parts: expected at least 5, got ${parts.length}`);
+    }
+    
+    // Parse obligate fields
+    const networkCohort = parts[0];
+    const network = networkCohort[0];
+    const cohort = networkCohort.slice(1);
+    
+    const ptid = parts[1];
+    const visit = parts[2];
+    const region = parts[3];
+    
+    // Parse sequencing method and ID
+    const seqParts = parts[4].split('-');
+    const sequencingMethod = seqParts[0];
+    const sequenceId = seqParts.length > 1 ? seqParts[1] : '';
+    
+    // Parse optional fields
+    const optionalFields = {};
+    for (const part of parts.slice(5)) {
+        if (part.startsWith('p-')) {
+            optionalFields.processing = part;
+        } else if (part.startsWith('m-')) {
+            optionalFields.modifiers = part;
+        } else if (part.startsWith('e-')) {
+            optionalFields.extras = part;
+        } else if (part.startsWith('coll-')) {
+            optionalFields.collapsed = part;
+        }
+    }
+    
+    return new SequenceName(network, cohort, ptid, visit, region, sequencingMethod, sequenceId, optionalFields);
+}
+
+// --- Convention-Specific Parsers ---
+function parseFilenameForConvention(filename, convention) {
+    // Remove .fasta extension if present
+    let name = filename.replace(/\.fasta$/, '');
+    
+    if (convention === 'standard') {
+        return parseFastaFilename(filename);
+    } else {
+        throw new Error(`Unknown convention: ${convention}`);
+    }
+}
+
+function parseSequenceNameForConvention(seqId, convention) {
+    if (convention === 'standard') {
+        return parseSequenceName(seqId);
+    } else {
+        throw new Error(`Unknown convention: ${convention}`);
+    }
+}
+
+// --- Validation Function ---
+function validateFastaFile(filename, sequences, skipCount = 0) {
+    // sequences: array of {name: string, seq: array}
+    // skipCount: number of sequences skipped at the beginning (for sequence numbering)
+    // Returns object with results for standard convention: { standard: { errors: [], valid: bool } }
+    const results = {};
+    
+    const conventionName = 'standard';
+    const convention = NAMING_CONVENTIONS[conventionName];
+    const conventionResults = {
+        name: convention.name,
+        errors: [],
+        valid: true
+    };
+    
+    // Parse filename (but don't return early if it fails)
+    let filenameObj = null;
+    try {
+        filenameObj = parseFastaFilename(filename);
+    } catch (e) {
+        conventionResults.errors.push(`Filename error: ${e.message}`);
+        conventionResults.valid = false;
+        // Continue to validate sequences even if filename fails
+    }
+    
+    // Validate sequences (always validate, even if filename failed)
+    for (let i = 0; i < sequences.length; i++) {
+        const seq = sequences[i];
+        // Calculate actual sequence number (accounting for skipped sequences)
+        const actualSeqNum = i + 1 + skipCount;
+        try {
+            const seqName = parseSequenceName(seq.name);
+            
+            // Check consistency between filename and sequence names (only if filename was successfully parsed)
+            if (filenameObj) {
+                if (seqName.network !== filenameObj.network) {
+                    conventionResults.errors.push(`Sequence ${actualSeqNum}: network mismatch (file: ${filenameObj.network}, seq: ${seqName.network})`);
+                    conventionResults.valid = false;
+                }
+                
+                if (seqName.ptid !== filenameObj.ptid) {
+                    conventionResults.errors.push(`Sequence ${actualSeqNum}: PTID mismatch (file: ${filenameObj.ptid}, seq: ${seqName.ptid})`);
+                    conventionResults.valid = false;
+                }
+            }
+            
+        } catch (e) {
+            conventionResults.errors.push(`Sequence ${actualSeqNum} ('${seq.name}'): ${e.message}`);
+            conventionResults.valid = false;
+        }
+    }
+    
+    results[conventionName] = conventionResults;
+    return results;
+}
+
+// --- State ---
+const state = {
+    rawSequences: [],
+    viewSequences: [],
+    mode: 'NT',
+    highlightMatches: '', // 'reference' or '' (off)
+    frame: 1,
+    maxLength: 0,
+    selection: null,
+    selectionAnchor: null,
+    namesWidth: 200,
+    refIndex: 0,
+    refMap: [],
+    mouse: { isDown: false, target: null, startR: 0, startC: 0, lastHoverC: 0 },
+    isAASequence: false,
+    isAlignment: false, // Whether all sequences have the same length (alignment)
+    sequenceGroups: null,
+    groupDelimiter: null,
+    groupFieldNum: null,
+    groupNames: null,
+    currentFileName: null,
+    fieldDelimiter: '_',
+    subfieldDelimiter: '-',
+    newFieldDelimiter: '_',
+    newSubfieldDelimiter: '-',
+    filenameFields: [],
+    sequenceFields: [],
+    filenameRegexMap: new Map(), // fieldIndex -> regex string (identity by default)
+    sequenceRegexMap: new Map(), // fieldIndex -> regex string (identity by default)
+    skipSequences: 0, // Number of header sequences to skip from transformations
+    overriddenTransformedFilename: null, // Override for transformed filename (e.g., from visit replacement)
+    validationHasRun: false, // Track if validation has been run
+    validationPassed: false // Track if validation passed
+};
+
+// --- DOM ---
+const dom = {
+    file: document.getElementById('inp-file'),
+    btnSortSequences: document.getElementById('btn-sort-sequences'),
+    btnGroupSequences: document.getElementById('btn-group-sequences'),
+    btnDownload: document.getElementById('btn-download'),
+    btnNt: document.getElementById('btn-nt'),
+    btnAa: document.getElementById('btn-aa'),
+    selHighlight: document.getElementById('sel-highlight'),
+    overlay: document.getElementById('overlay'),
+    overlayMsg: document.getElementById('overlay-msg'),
+    areaSeq: document.getElementById('area-seq'),
+    areaNames: document.getElementById('area-names'),
+    areaNamesNew: document.getElementById('area-names-new'),
+    areaRuler: document.getElementById('area-ruler'),
+    resizerNames: document.getElementById('resizer-names'),
+    resizerNamesNew: document.getElementById('resizer-names-new'),
+    cvsSeq: document.getElementById('cvs-seq'),
+    cvsNames: document.getElementById('cvs-names'),
+    cvsNamesNew: document.getElementById('cvs-names-new'),
+    cvsRuler: document.getElementById('cvs-ruler'),
+    filenameNewText: document.getElementById('filename-new-text'),
+    sizer: document.getElementById('scroll-sizer'),
+    filenameDisplay: document.getElementById('filename-display'),
+    filenameText: document.getElementById('filename-text'),
+    btnValidate: document.getElementById('btn-validate'),
+    btnParse: document.getElementById('btn-parse'),
+    btnCopyValidation: document.getElementById('btn-copy-validation'),
+    btnCopyParse: document.getElementById('btn-copy-parse'),
+    validationResults: document.getElementById('validation-results'),
+    parseResults: document.getElementById('parse-results'),
+    inpFieldDelimiter: document.getElementById('inp-field-delimiter'),
+    inpSubfieldDelimiter: document.getElementById('inp-subfield-delimiter'),
+    inpNewFieldDelimiter: document.getElementById('inp-new-field-delimiter'),
+    inpNewSubfieldDelimiter: document.getElementById('inp-new-subfield-delimiter'),
+    fieldLegendPopup: document.getElementById('field-legend-popup'),
+    legendFilenameContent: document.getElementById('legend-filename-content'),
+    legendSequencesContent: document.getElementById('legend-sequences-content'),
+    btnShowLegend: document.getElementById('btn-show-legend'),
+    btnApplyTransformations: document.getElementById('btn-apply-transformations'),
+    inpSkipSequences: document.getElementById('inp-skip-sequences'),
+    btnExportSettings: document.getElementById('btn-export-settings'),
+    btnFilenameHelp: document.getElementById('btn-filename-help'),
+    btnSequenceHelp: document.getElementById('btn-sequence-help')
+};
+
+const ctxSeq = dom.cvsSeq.getContext('2d', { alpha: false });
+const ctxNames = dom.cvsNames.getContext('2d');
+const ctxNamesNew = dom.cvsNamesNew.getContext('2d');
+const ctxRuler = dom.cvsRuler.getContext('2d');
+
+// --- Init ---
+function init() {
+    dom.file.addEventListener('change', (e) => {
+        if(e.target.files.length) loadFile(e.target.files[0]);
+    });
+    
+    dom.btnSortSequences.addEventListener('click', sortSequencesByName);
+    dom.btnGroupSequences.addEventListener('click', () => {
+        document.getElementById('group-overlay').style.display = 'flex';
+    });
+    document.getElementById('btn-run-group').addEventListener('click', runGroupTask);
+    
+    // Enable FASTA export button (no longer requires validation)
+    if (dom.btnDownload) {
+        dom.btnDownload.disabled = false;
+        dom.btnDownload.addEventListener('click', () => exportAlignment('download'));
+    }
+    
+    // JSON export button requires validation - keep disabled initially
+    if (dom.btnExportSettings) {
+        dom.btnExportSettings.disabled = true;
+    }
+    
+    dom.btnNt.addEventListener('click', () => setMode('NT'));
+    dom.btnAa.addEventListener('click', () => setMode('AA'));
+    
+    dom.selHighlight.addEventListener('change', (e) => {
+        state.highlightMatches = e.target.value;
+        recalc();
+    });
+    
+    dom.btnValidate.addEventListener('click', runValidation);
+    
+    if (dom.btnParse) {
+        dom.btnParse.addEventListener('click', runParse);
+    }
+    
+    
+    // Copy to clipboard functionality
+    if (dom.btnCopyValidation) {
+        dom.btnCopyValidation.addEventListener('click', () => {
+            copyToClipboard(dom.validationResults);
+        });
+    }
+    
+    if (dom.btnCopyParse) {
+        dom.btnCopyParse.addEventListener('click', () => {
+            copyToClipboard(dom.parseResults);
+        });
+    }
+    
+    if (dom.btnExportSettings) {
+        dom.btnExportSettings.addEventListener('click', exportSettings);
+    }
+    
+    // Delimiter input handlers
+    if (dom.inpFieldDelimiter) {
+        // Initialize state from input value
+        state.fieldDelimiter = dom.inpFieldDelimiter.value || '_';
+        
+        dom.inpFieldDelimiter.addEventListener('input', (e) => {
+            state.fieldDelimiter = e.target.value || '_';
+            updateFieldParsing();
+            updateColoredFilename();
+            render();
+        });
+    }
+    
+    if (dom.inpSubfieldDelimiter) {
+        // Initialize state from input value
+        state.subfieldDelimiter = dom.inpSubfieldDelimiter.value || '-';
+        
+        dom.inpSubfieldDelimiter.addEventListener('input', (e) => {
+            state.subfieldDelimiter = e.target.value || '-';
+            updateFieldParsing();
+            updateColoredFilename();
+            render();
+        });
+    }
+    
+    // New delimiter inputs (for output only, don't trigger parsing update)
+    if (dom.inpNewFieldDelimiter) {
+        state.newFieldDelimiter = dom.inpNewFieldDelimiter.value || '_';
+        dom.inpNewFieldDelimiter.addEventListener('input', (e) => {
+            state.newFieldDelimiter = e.target.value || '_';
+            // Re-render to update transformed names with new delimiters
+            updateTransformedFilename();
+            render();
+        });
+    }
+    if (dom.inpNewSubfieldDelimiter) {
+        state.newSubfieldDelimiter = dom.inpNewSubfieldDelimiter.value || '-';
+        dom.inpNewSubfieldDelimiter.addEventListener('input', (e) => {
+            state.newSubfieldDelimiter = e.target.value || '-';
+            // Re-render to update transformed names with new delimiters
+            updateTransformedFilename();
+            render();
+        });
+    }
+    
+    // Legend button
+    if (dom.btnShowLegend) {
+        dom.btnShowLegend.addEventListener('click', toggleLegend);
+    }
+    
+    // Filename help button
+    if (dom.btnFilenameHelp) {
+        dom.btnFilenameHelp.addEventListener('click', () => {
+            const overlay = document.getElementById('filename-help-overlay');
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+        });
+    }
+    
+    // Sequence help button
+    if (dom.btnSequenceHelp) {
+        dom.btnSequenceHelp.addEventListener('click', () => {
+            const overlay = document.getElementById('sequence-help-overlay');
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+        });
+    }
+    
+    // Apply transformations button
+    if (dom.btnApplyTransformations) {
+        dom.btnApplyTransformations.addEventListener('click', () => {
+            // Clear any overridden transformed filename when transformations are reapplied
+            state.overriddenTransformedFilename = null;
+            
+            // Update skip value from input
+            if (dom.inpSkipSequences) {
+                state.skipSequences = parseInt(dom.inpSkipSequences.value) || 0;
+            }
+            
+            // Re-parse fields using the first non-skipped sequence (fields may have changed)
+            const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
+            const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
+            
+            // Find first non-skipped sequence for field parsing
+            let exampleSeqIndex = state.skipSequences;
+            if (exampleSeqIndex >= state.rawSequences.length) {
+                exampleSeqIndex = Math.max(0, state.rawSequences.length - 1);
+            }
+            if (state.rawSequences.length > 0 && exampleSeqIndex >= 0) {
+                const exampleSeqName = state.rawSequences[exampleSeqIndex].name || '';
+                state.sequenceFields = parseFields(exampleSeqName, fieldDelim, subfieldDelim);
+                
+                // Initialize regex maps with identity regex for all fields
+                state.sequenceFields.forEach(part => {
+                    if (!part.isDelimiter && part.fieldIndex !== undefined) {
+                        if (!state.sequenceRegexMap.has(part.fieldIndex)) {
+                            state.sequenceRegexMap.set(part.fieldIndex, '(.*)');
+                        }
+                    }
+                });
+            } else {
+                state.sequenceFields = [];
+            }
+            
+            // Apply all transformations and update display
+            updateTransformedFilename();
+            updateLegend(); // Re-evaluate legend with new transformations and field structure
+            render(); // Re-render the display
+        });
+    }
+    
+    // Skip sequences input
+    if (dom.inpSkipSequences) {
+        // Initialize state from input value
+        state.skipSequences = parseInt(dom.inpSkipSequences.value) || 0;
+        
+        dom.inpSkipSequences.addEventListener('input', (e) => {
+            state.skipSequences = parseInt(e.target.value) || 0;
+            // Don't apply immediately, wait for Apply button
+        });
+    }
+
+    // Synchronize scrolling
+    dom.areaSeq.addEventListener('scroll', () => {
+        dom.areaNames.scrollTop = dom.areaSeq.scrollTop;
+        if (dom.areaNamesNew) dom.areaNamesNew.scrollTop = dom.areaSeq.scrollTop;
+        dom.areaRuler.scrollLeft = dom.areaSeq.scrollLeft;
+        render();
+    });
+    dom.areaNames.addEventListener('scroll', () => {
+        dom.areaSeq.scrollTop = dom.areaNames.scrollTop;
+        if (dom.areaNamesNew) dom.areaNamesNew.scrollTop = dom.areaNames.scrollTop;
+        render();
+    });
+    if (dom.areaNamesNew) {
+        dom.areaNamesNew.addEventListener('scroll', () => {
+            dom.areaSeq.scrollTop = dom.areaNamesNew.scrollTop;
+            dom.areaNames.scrollTop = dom.areaNamesNew.scrollTop;
+            render();
+        });
+    }
+    dom.areaRuler.addEventListener('scroll', () => {
+        dom.areaSeq.scrollLeft = dom.areaRuler.scrollLeft;
+        render();
+    });
+
+    // Mouse interactions
+    dom.areaSeq.addEventListener('mousedown', (e) => onMouseDown(e, 'SEQ'));
+    dom.areaNames.addEventListener('mousedown', (e) => onMouseDown(e, 'NAMES'));
+    dom.areaRuler.addEventListener('mousedown', (e) => onMouseDown(e, 'RULER'));
+
+    // Resize names panel
+    let resizingNames = false;
+    dom.resizerNames.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        resizingNames = true;
+        state.mouse.startX = e.clientX;
+        state.mouse.startNamesWidth = state.namesWidth;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if(resizingNames) {
+            const delta = e.clientX - state.mouse.startX;
+            const newWidth = state.mouse.startNamesWidth + delta;
+            setNamesWidth(Math.max(150, Math.min(600, newWidth)));
+        }
+    });
+
+    window.addEventListener('mouseup', () => {
+        resizingNames = false;
+    });
+
+    setNamesWidth(state.namesWidth);
+    onResize();
+}
+
+function setNamesWidth(w) {
+    state.namesWidth = Math.max(100, Math.min(800, w));
+    document.documentElement.style.setProperty('--names-width', state.namesWidth + 'px');
+    onResize();
+}
+
+function calculateNamesWidth() {
+    if (!state.rawSequences.length) {
+        setNamesWidth(200); // Default width
+        return;
+    }
+    
+    // Ensure canvas is initialized for text measurement
+    if (dom.cvsNames.width === 0) {
+        dom.cvsNames.width = 1;
+        dom.cvsNames.height = 1;
+    }
+    
+    // Calculate width needed for longest sequence name
+    const ctx = dom.cvsNames.getContext('2d');
+    ctx.font = CONFIG.labelFont;
+    
+    let maxWidth = 0;
+    state.rawSequences.forEach((s) => {
+        const text = s.name || '';
+        const metrics = ctx.measureText(text);
+        if (metrics.width > maxWidth) {
+            maxWidth = metrics.width;
+        }
+    });
+    
+    // Add padding (20px on each side) and set width
+    const calculatedWidth = Math.ceil(maxWidth) + 40;
+    setNamesWidth(Math.max(200, Math.min(800, calculatedWidth)));
+}
+
+function onResize() {
+    const w = dom.areaSeq.clientWidth;
+    const h = dom.areaSeq.clientHeight;
+    dom.cvsSeq.width = w;
+    dom.cvsSeq.height = h;
+    // Names canvas should be at least as wide as the calculated width to show full names
+    dom.cvsNames.width = Math.max(dom.areaNames.clientWidth, state.namesWidth);
+    dom.cvsNames.height = dom.areaNames.clientHeight;
+    dom.cvsNamesNew.width = Math.max(dom.areaNamesNew.clientWidth, state.namesWidth);
+    dom.cvsNamesNew.height = dom.areaNamesNew.clientHeight;
+    dom.cvsRuler.width = dom.areaRuler.clientWidth;
+    dom.cvsRuler.height = dom.areaRuler.clientHeight;
+    recalc();
+}
+
+window.addEventListener('resize', onResize);
+
+function showOverlay(show) {
+    if(show) dom.overlay.classList.add('active');
+    else dom.overlay.classList.remove('active');
+}
+
+// --- Loading ---
+function loadFile(file) {
+    if(!file) return;
+    showOverlay(true);
+    const reader = new FileReader();
+    const name = file.name.toLowerCase();
+    const isFastq = name.endsWith('.fastq') || name.endsWith('.fq');
+    
+    // Store the original filename
+    state.currentFileName = file.name;
+    
+    reader.onload = e => {
+        if(isFastq) parseFastq(e.target.result);
+        else parseFasta(e.target.result);
+    };
+    reader.readAsText(file);
+}
+
+function parseFasta(text) {
+    const lines = text.split(/\r?\n/);
+    const seqs = [];
+    let name = null, buf = [];
+    // Get current field delimiter (default to '_' if not set)
+    const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter || '_';
+    
+    for(let line of lines) {
+        line = line.trim();
+        if(!line) continue;
+        if(line.startsWith('>')) {
+            if(name) seqs.push({name, seq: buf.join('').split('')});
+            name = line.substring(1).trim();
+            // Replace all spaces with current field delimiter
+            if(name) {
+                name = name.replace(/\s+/g, fieldDelim);
+            }
+            buf = [];
+        } else {
+            buf.push(line.toUpperCase().replace(/[^A-Z-]/g, ''));
+        }
+    }
+    if(name) {
+        // Replace all spaces with current field delimiter (in case name was set but not yet processed)
+        name = name.replace(/\s+/g, fieldDelim);
+        seqs.push({name, seq: buf.join('').split('')});
+    }
+    
+    // Check if this is an alignment (all sequences same length)
+    let isAlignment = true;
+    if(seqs.length > 1) {
+        const firstLength = seqs[0].seq.length;
+        for(let i = 1; i < seqs.length; i++) {
+            if(seqs[i].seq.length !== firstLength) {
+                isAlignment = false;
+                break;
+            }
+        }
+    } else if(seqs.length === 1) {
+        isAlignment = true; // Single sequence can be considered an alignment
+    } else {
+        isAlignment = false;
+    }
+    
+    finalizeLoad(seqs, isAlignment);
+}
+
+function parseFastq(text) {
+    const lines = text.split(/\r?\n/);
+    const seqs = [];
+    // Get current field delimiter (default to '_' if not set)
+    const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter || '_';
+    
+    for(let i = 0; i < lines.length; i += 4) {
+        if(i + 1 < lines.length && lines[i].startsWith('@')) {
+            let name = lines[i].substring(1).trim();
+            // Replace all spaces with current field delimiter
+            if(name) {
+                name = name.replace(/\s+/g, fieldDelim);
+            }
+            const seq = lines[i + 1].toUpperCase().replace(/[^A-Z-]/g, '').split('');
+            seqs.push({name, seq});
+        }
+    }
+    
+    // Check if this is an alignment (all sequences same length)
+    let isAlignment = true;
+    if(seqs.length > 1) {
+        const firstLength = seqs[0].seq.length;
+        for(let i = 1; i < seqs.length; i++) {
+            if(seqs[i].seq.length !== firstLength) {
+                isAlignment = false;
+                break;
+            }
+        }
+    } else if(seqs.length === 1) {
+        isAlignment = true; // Single sequence can be considered an alignment
+    } else {
+        isAlignment = false;
+    }
+    
+    finalizeLoad(seqs, isAlignment);
+}
+
+function detectSequenceType(seqs) {
+    if (!seqs || seqs.length === 0) return 'NT';
+    const sample = seqs[0].seq.join('').replace(/-/g, '').substring(0, 100);
+    const aaChars = /[EFILPQ]/i;
+    const hasAA = aaChars.test(sample);
+    const ntOnly = /^[ACGTURYSWKMBDHVN-]+$/i.test(sample);
+    return (hasAA || !ntOnly) ? 'AA' : 'NT';
+}
+
+function finalizeLoad(seqs, isAlignment) {
+    if(!seqs.length) {
+        alert("No sequences found in file.");
+        showOverlay(false);
+        return;
+    }
+    
+    state.rawSequences = seqs;
+    state.refIndex = 0;
+    state.isAASequence = (detectSequenceType(seqs) === 'AA');
+    state.isAlignment = isAlignment;
+    
+    if(state.isAASequence && state.mode === 'NT') {
+        setMode('AA', true);
+    }
+    
+    // Enable/disable highlighter based on whether it's an alignment
+    if (dom.selHighlight) {
+        dom.selHighlight.disabled = !isAlignment;
+        if (!isAlignment) {
+            dom.selHighlight.value = '';
+            state.highlightMatches = '';
+        }
+    }
+    
+    // Enable validate and parse buttons if file is loaded
+    if (dom.btnValidate) {
+        dom.btnValidate.disabled = false;
+    }
+    if (dom.btnParse) {
+        dom.btnParse.disabled = false;
+    }
+    
+    // Enable FASTA export button (validation no longer required)
+    if (dom.btnDownload) {
+        dom.btnDownload.disabled = false;
+    }
+    
+    // JSON export button requires validation - keep disabled until validation passes
+    if (dom.btnExportSettings) {
+        dom.btnExportSettings.disabled = true;
+    }
+    
+    // Reset validation state when new file is loaded
+    state.validationHasRun = false;
+    state.validationPassed = false;
+    
+    // Display filename with colored fields
+    if (state.currentFileName) {
+        updateColoredFilename();
+    } else {
+        dom.filenameText.textContent = 'no file loaded yet';
+    }
+    
+    // Calculate and set names panel width based on longest sequence name
+    calculateNamesWidth();
+    
+    // Parse fields for color coding (will use current delimiter values from input boxes)
+    updateFieldParsing();
+    updateColoredFilename();
+    
+    // Initialize skip sequences input
+    if (dom.inpSkipSequences) {
+        dom.inpSkipSequences.value = state.skipSequences || 0;
+    }
+    
+    // Show legend now that file is loaded
+    if (dom.fieldLegendPopup) {
+        updateLegend();
+        dom.fieldLegendPopup.style.display = 'block';
+    }
+    
+    recalc();
+    showOverlay(false);
+}
+
+// --- Sort Sequences by Name ---
+function sortSequencesByName() {
+    if (state.rawSequences.length === 0) {
+        alert("No sequences to sort.");
+        return;
+    }
+    
+    const refSeq = state.rawSequences[state.refIndex];
+    
+    const otherSeqs = [];
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i !== state.refIndex) {
+            otherSeqs.push(state.rawSequences[i]);
+        }
+    }
+    
+    otherSeqs.sort((a, b) => {
+        const nameA = a.name || '';
+        const nameB = b.name || '';
+        return nameA.localeCompare(nameB);
+    });
+    
+    const newSequences = [refSeq, ...otherSeqs];
+    state.rawSequences = newSequences;
+    state.refIndex = 0;
+    
+    // Recalculate names width after sorting
+    calculateNamesWidth();
+    
+    recalc();
+}
+
+// --- Group Sequences by Name Field ---
+function runGroupTask() {
+    const delimiter = document.getElementById('inp-group-delimiter').value || '_';
+    const fieldNumOneBased = parseInt(document.getElementById('inp-group-field').value) || 3;
+    
+    if (delimiter.length === 0) {
+        alert("Please specify a delimiter character.");
+        return;
+    }
+    
+    if (fieldNumOneBased < 1) {
+        alert("Field number must be at least 1.");
+        return;
+    }
+    
+    const fieldNum = fieldNumOneBased - 1;
+    document.getElementById('group-overlay').style.display = 'none';
+    
+    const nameToGroup = new Map();
+    const uniqueGroupValues = new Set();
+    
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i === state.refIndex) continue;
+        
+        const seq = state.rawSequences[i];
+        const name = seq.name || '';
+        const fields = name.split(delimiter);
+        
+        if (fields.length > fieldNum) {
+            uniqueGroupValues.add(fields[fieldNum]);
+        }
+    }
+    
+    const sortedGroupValues = Array.from(uniqueGroupValues).sort();
+    const groupNames = new Map();
+    const groupIdToValue = new Map();
+    
+    sortedGroupValues.forEach((groupValue, index) => {
+        const groupId = index;
+        groupNames.set(groupValue, groupId);
+        groupIdToValue.set(groupId, groupValue);
+    });
+    
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        if (i === state.refIndex) continue;
+        
+        const seq = state.rawSequences[i];
+        const name = seq.name || '';
+        const fields = name.split(delimiter);
+        
+        if (fields.length > fieldNum) {
+            const groupValue = fields[fieldNum];
+            const gId = groupNames.get(groupValue);
+            nameToGroup.set(name, gId);
+        }
+    }
+    
+    state.sequenceGroups = nameToGroup;
+    state.groupDelimiter = delimiter;
+    state.groupFieldNum = fieldNumOneBased;
+    state.groupNames = groupIdToValue;
+    
+    updateColorLegend();
+    recalc();
+}
+
+function updateColorLegend() {
+    const legend = document.getElementById('color-legend');
+    const groupsContent = document.getElementById('legend-groups-content');
+    
+    if (!state.sequenceGroups || state.groupNames.size === 0) {
+        legend.style.display = 'none';
+        return;
+    }
+    
+    groupsContent.innerHTML = '';
+    const sortedGroups = Array.from(state.groupNames.entries()).sort((a, b) => a[0] - b[0]);
+    
+    sortedGroups.forEach(([groupId, groupValue]) => {
+        const color = COLOR_PALETTE[(groupId + 1) % COLOR_PALETTE.length];
+        const div = document.createElement('div');
+        div.style.display = 'flex';
+        div.style.alignItems = 'center';
+        div.style.gap = '8px';
+        div.style.marginBottom = '4px';
+        div.innerHTML = `
+            <div style="width: 16px; height: 16px; background: ${color}; border: 1px solid #d1d5db; border-radius: 3px;"></div>
+            <span>${groupValue}</span>
+        `;
+        groupsContent.appendChild(div);
+    });
+    
+    legend.style.display = 'block';
+}
+
+// --- Validation Logic ---
+function getTransformedFilename() {
+    if (!state.currentFileName) return null;
+    
+    // Check if there's an overridden transformed filename (e.g., from visit replacement)
+    if (state.overriddenTransformedFilename) {
+        return state.overriddenTransformedFilename;
+    }
+    
+    const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
+    const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
+    const filenameFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
+    
+    if (filenameFields.length === 0) return state.currentFileName;
+    
+    // First pass: transform all fields and mark empty ones
+    const transformedFields = filenameFields.map((part, idx) => {
+        if (part.isDelimiter) {
+            return { ...part, isEmpty: false };
+        } else {
+            const regex = state.filenameRegexMap.get(part.fieldIndex) || '(.*)';
+            const transformed = applyRegexTransform(part.text, regex);
+            return { ...part, transformed, isEmpty: transformed === '' };
+        }
+    });
+    
+    // Second pass: build output, skipping empty fields and their adjacent delimiters
+    // Use NEW delimiters for joining the transformed fields
+    const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+    const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+    let transformedParts = [];
+    transformedFields.forEach((part, idx) => {
+        if (part.isDelimiter) {
+            // Check if adjacent fields are empty
+            const prevField = idx > 0 ? transformedFields[idx - 1] : null;
+            const nextField = idx < transformedFields.length - 1 ? transformedFields[idx + 1] : null;
+            const prevIsEmpty = prevField && !prevField.isDelimiter && prevField.isEmpty;
+            const nextIsEmpty = nextField && !nextField.isDelimiter && nextField.isEmpty;
+            
+            // Always include delimiters (even if adjacent fields are empty)
+            // They will be collapsed later if there are multiple consecutive ones
+            if (part.subfieldIndex === null || part.subfieldIndex === undefined) {
+                // This is a field delimiter
+                transformedParts.push(newFieldDelim);
+            } else {
+                // This is a subfield delimiter
+                transformedParts.push(newSubfieldDelim);
+            }
+        } else {
+            // Only include non-empty fields
+            if (!part.isEmpty) {
+                transformedParts.push(part.transformed);
+            }
+        }
+    });
+    
+    let result = transformedParts.join('');
+    
+    // Amalgamate repeated optional fields
+    result = amalgamateOptionalFields(result, newFieldDelim, newSubfieldDelim);
+    
+    // Don't collapse delimiters here - keep them as-is for mapping purposes
+    // Delimiter collapsing will be done on export
+    
+    return result;
+}
+
+function getTransformedSequenceNames() {
+    const transformedSequences = [];
+    for (let i = 0; i < state.rawSequences.length; i++) {
+        const seq = state.rawSequences[i];
+        const transformedName = transformSequenceName(seq.name, i);
+        transformedSequences.push({
+            name: transformedName,
+            seq: seq.seq
+        });
+    }
+    return transformedSequences;
+}
+
+function runValidation() {
+    if (!state.currentFileName || !state.rawSequences.length) {
+        alert("Please load a FASTA file first.");
+        return;
+    }
+    
+    showOverlay(true);
+    dom.overlayMsg.textContent = "Validating file...";
+    
+    try {
+        // Get transformed filename and sequence names
+        let transformedFilename = getTransformedFilename();
+        let allTransformedSequences = getTransformedSequenceNames();
+        
+        // Collapse delimiters before validating
+        const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+        const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+        
+        if (transformedFilename) {
+            transformedFilename = collapseDelimiters(transformedFilename, newFieldDelim, newSubfieldDelim);
+        }
+        
+        allTransformedSequences = allTransformedSequences.map(seq => ({
+            ...seq,
+            name: collapseDelimiters(seq.name, newFieldDelim, newSubfieldDelim)
+        }));
+        
+        // Skip header sequences based on skipSequences setting
+        const skipCount = state.skipSequences || 0;
+        const transformedSequences = allTransformedSequences.slice(skipCount);
+        
+        // Run validation using transformed names (excluding skipped sequences)
+        // Pass skipCount so sequence numbers in error messages reflect actual sequence numbers
+        const errors = validateFastaFile(transformedFilename, transformedSequences, skipCount);
+        
+        let visitReplacementMessage = null;
+        
+        // If validation succeeds and visit field is "0000", replace it with sorted union of sequence visits
+        if (errors['standard'] && errors['standard'].valid) {
+            // Parse the transformed filename to get the visit field (field index 2)
+            const filenameParts = transformedFilename.split(newFieldDelim);
+            if (filenameParts.length >= 3) {
+                const visitField = filenameParts[2];
+                
+                // Check if visit is "0000"
+                if (visitField === '0000') {
+                    // Collect all visit fields from sequence names (excluding skipped sequences)
+                    const visitSet = new Set();
+                    transformedSequences.forEach(seq => {
+                        const seqParts = seq.name.split(newFieldDelim);
+                        if (seqParts.length >= 3) {
+                            const seqVisit = seqParts[2];
+                            // Visit can be a single value or dash-separated (e.g., "0050-0070")
+                            // Split by subfield delimiter and add each part
+                            const visitParts = seqVisit.split(newSubfieldDelim);
+                            visitParts.forEach(v => {
+                                if (v && v.trim()) {
+                                    visitSet.add(v.trim());
+                                }
+                            });
+                        }
+                    });
+                    
+                    // Sort visits and join with subfield delimiter
+                    const sortedVisits = Array.from(visitSet).sort().join(newSubfieldDelim);
+                    
+                    if (sortedVisits && sortedVisits !== '0000') {
+                        // Update the transformed filename's visit field directly (field index 2)
+                        // Store the old visit value
+                        const oldVisit = filenameParts[2];
+                        
+                        // Replace visit in transformed filename
+                        filenameParts[2] = sortedVisits;
+                        transformedFilename = filenameParts.join(newFieldDelim);
+                        
+                        // Store the updated transformed filename in state so it persists
+                        state.overriddenTransformedFilename = transformedFilename;
+                        
+                        // Re-validate with updated transformed filename
+                        const revalidationErrors = validateFastaFile(transformedFilename, transformedSequences, skipCount);
+                        errors['standard'] = revalidationErrors['standard'];
+                        
+                        visitReplacementMessage = `Visit field "${oldVisit}" was replaced with "${sortedVisits}" (sorted union of visits from sequence names).`;
+                    }
+                }
+            }
+        }
+        
+        // Display results (show total count but note skipped sequences)
+        displayValidationResults(transformedFilename, errors, transformedSequences.length, skipCount, visitReplacementMessage);
+        
+        // Update filename display if it changed
+        if (visitReplacementMessage) {
+            updateColoredFilename();
+            updateTransformedFilename();
+        }
+        
+        showOverlay(false);
+    } catch (error) {
+        console.error("Validation error:", error);
+        showOverlay(false);
+        alert("Validation failed: " + error.message);
+    }
+}
+
+function displayValidationResults(filename, validationResults, seqCount, skipCount = 0, visitReplacementMessage = null) {
+    const resultsDiv = dom.validationResults;
+    let html = '';
+    
+    html += `<div style="margin-bottom: 15px;"><strong>File:</strong> ${filename}</div>`;
+    if (skipCount > 0) {
+        html += `<div style="margin-bottom: 15px;"><strong>Sequences validated:</strong> ${seqCount} (${skipCount} header sequence${skipCount === 1 ? '' : 's'} skipped)</div>`;
+    } else {
+        html += `<div style="margin-bottom: 15px;"><strong>Sequences:</strong> ${seqCount}</div>`;
+    }
+    
+    // Display visit replacement message if present
+    if (visitReplacementMessage) {
+        html += `<div style="margin-bottom: 15px; padding: 10px; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 4px; color: #92400e; font-size: 13px;"><strong>Note:</strong> ${visitReplacementMessage}</div>`;
+    }
+    
+    html += '<hr style="margin: 15px 0; border: none; border-top: 1px solid #e5e7eb;">';
+    
+    // Display results for standard convention
+    const result = validationResults['standard'];
+    html += `<div style="margin-bottom: 20px; padding: 15px; background: ${result.valid ? '#f0fdf4' : '#fef2f2'}; border: 1px solid ${result.valid ? '#86efac' : '#fca5a5'}; border-radius: 6px;">`;
+    html += `<div style="font-weight: bold; font-size: 14px; margin-bottom: 10px; color: ${result.valid ? '#166534' : '#991b1b'};">`;
+    html += result.valid ? '✓' : '✗';
+    html += ` ${result.name} Convention`;
+    html += `</div>`;
+    
+    // Update validation state
+    state.validationHasRun = true;
+    state.validationPassed = result.valid;
+    
+    if (result.valid) {
+        html += `<div style="color: #166534; font-size: 13px;">Valid - File conforms to ${result.name} naming convention.</div>`;
+        
+        // Enable JSON export button only when validation passes
+        if (dom.btnExportSettings) {
+            dom.btnExportSettings.disabled = false;
+        }
+    } else {
+        html += `<div style="color: #991b1b; font-weight: bold; margin-bottom: 8px; font-size: 13px;">Found ${result.errors.length} error(s):</div>`;
+        html += '<ul style="margin: 5px 0; padding-left: 20px; color: #374151; font-size: 12px;">';
+        result.errors.forEach(error => {
+            html += `<li style="margin: 3px 0;">${error}</li>`;
+        });
+        html += '</ul>';
+        
+        // Disable JSON export button when validation fails
+        if (dom.btnExportSettings) {
+            dom.btnExportSettings.disabled = true;
+        }
+    }
+    
+    html += '</div>';
+    
+    resultsDiv.innerHTML = html;
+    document.getElementById('validation-overlay').style.display = 'flex';
+}
+
+// --- Copy to Clipboard Function ---
+function copyToClipboard(element) {
+    // Get text content from the element
+    const text = element.innerText || element.textContent;
+    
+    // Use modern Clipboard API if available
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            // Show feedback
+            const button = element.id === 'validation-results' ? dom.btnCopyValidation : dom.btnCopyParse;
+            if (button) {
+                const originalText = button.textContent;
+                button.textContent = 'Copied!';
+                button.style.background = '#10b981';
+                button.style.color = 'white';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.background = '#f3f4f6';
+                    button.style.color = '';
+                }, 2000);
+            }
+        }).catch(err => {
+            console.error('Failed to copy:', err);
+            alert('Failed to copy to clipboard. Please select and copy manually.');
+        });
+    } else {
+        // Fallback for older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+            document.execCommand('copy');
+            const button = element.id === 'validation-results' ? dom.btnCopyValidation : dom.btnCopyParse;
+            if (button) {
+                const originalText = button.textContent;
+                button.textContent = 'Copied!';
+                button.style.background = '#10b981';
+                button.style.color = 'white';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.background = '#f3f4f6';
+                    button.style.color = '';
+                }, 2000);
+            }
+        } catch (err) {
+            console.error('Fallback copy failed:', err);
+            alert('Failed to copy to clipboard. Please select and copy manually.');
+        }
+        document.body.removeChild(textArea);
+    }
+}
+
+// --- Parse Logic ---
+function runParse() {
+    if (!state.currentFileName || !state.rawSequences.length) {
+        alert("Please load a FASTA file first.");
+        return;
+    }
+    
+    try {
+        // Get transformed filename and sequence names
+        let transformedFilename = getTransformedFilename();
+        let allTransformedSequences = getTransformedSequenceNames();
+        
+        // Collapse delimiters before parsing
+        const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+        const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+        
+        if (transformedFilename) {
+            transformedFilename = collapseDelimiters(transformedFilename, newFieldDelim, newSubfieldDelim);
+        }
+        
+        allTransformedSequences = allTransformedSequences.map(seq => ({
+            ...seq,
+            name: collapseDelimiters(seq.name, newFieldDelim, newSubfieldDelim)
+        }));
+        
+        // Skip header sequences based on skipSequences setting
+        const skipCount = state.skipSequences || 0;
+        const transformedSequences = allTransformedSequences.slice(skipCount);
+        
+        // Parse transformed filename
+        let filenameObj;
+        try {
+            filenameObj = parseFastaFilename(transformedFilename);
+        } catch (e) {
+            alert(`Error parsing transformed filename: ${e.message}`);
+            return;
+        }
+        
+        // Parse transformed sequences (excluding skipped sequences)
+        const parsedSequences = [];
+        for (let i = 0; i < transformedSequences.length; i++) {
+            const seq = transformedSequences[i];
+            try {
+                const seqName = parseSequenceName(seq.name);
+                parsedSequences.push({
+                    originalId: seq.name,
+                    parsedName: seqName,
+                    parseError: null
+                });
+            } catch (e) {
+                parsedSequences.push({
+                    originalId: seq.name,
+                    parsedName: null,
+                    parseError: e.message
+                });
+            }
+        }
+        
+        // Display results
+        displayParseResults(transformedFilename, filenameObj, parsedSequences, skipCount);
+        
+    } catch (error) {
+        console.error("Parse error:", error);
+        alert("Parse failed: " + error.message);
+    }
+}
+
+function displayParseResults(filename, filenameObj, parsedSequences, skipCount = 0) {
+    const resultsDiv = dom.parseResults;
+    let html = '';
+    
+    // Filename Components
+    html += '<div style="margin-bottom: 20px;"><strong style="font-size: 14px; color: #374151;">=== Filename Components ===</strong></div>';
+    html += '<div style="margin-left: 15px; margin-bottom: 10px;">';
+    html += `<div style="margin: 5px 0;"><strong>Network:</strong> ${filenameObj.network}</div>`;
+    html += `<div style="margin: 5px 0;"><strong>Protocol:</strong> ${filenameObj.protocol}</div>`;
+    html += `<div style="margin: 5px 0;"><strong>PTID:</strong> ${filenameObj.ptid}</div>`;
+    html += `<div style="margin: 5px 0;"><strong>Visit:</strong> ${filenameObj.visit}</div>`;
+    html += `<div style="margin: 5px 0;"><strong>Region:</strong> ${filenameObj.region}</div>`;
+    html += `<div style="margin: 5px 0;"><strong>Molecule:</strong> ${filenameObj.molecule}</div>`;
+    
+    // Optional fields
+    if (filenameObj.alignment) {
+        html += `<div style="margin: 5px 0;"><strong>Alignment:</strong> ${JSON.stringify(filenameObj.alignment)}</div>`;
+    }
+    if (filenameObj.filters) {
+        html += `<div style="margin: 5px 0;"><strong>Filters:</strong> ${JSON.stringify(filenameObj.filters)}</div>`;
+    }
+    if (filenameObj.modifiers) {
+        html += `<div style="margin: 5px 0;"><strong>Modifiers:</strong> ${JSON.stringify(filenameObj.modifiers)}</div>`;
+    }
+    if (filenameObj.additions) {
+        html += `<div style="margin: 5px 0;"><strong>Additions:</strong> ${JSON.stringify(filenameObj.additions)}</div>`;
+    }
+    if (filenameObj.removals) {
+        html += `<div style="margin: 5px 0;"><strong>Removals:</strong> ${JSON.stringify(filenameObj.removals)}</div>`;
+    }
+    if (filenameObj.sequencing) {
+        html += `<div style="margin: 5px 0;"><strong>Sequencing:</strong> ${JSON.stringify(filenameObj.sequencing)}</div>`;
+    }
+    if (filenameObj.processing) {
+        html += `<div style="margin: 5px 0;"><strong>Processing:</strong> ${JSON.stringify(filenameObj.processing)}</div>`;
+    }
+    if (filenameObj.extras) {
+        html += `<div style="margin: 5px 0;"><strong>Extras:</strong> ${JSON.stringify(filenameObj.extras)}</div>`;
+    }
+    if (filenameObj.reviewed) {
+        html += `<div style="margin: 5px 0;"><strong>Reviewed:</strong> ${JSON.stringify(filenameObj.reviewed)}</div>`;
+    }
+    
+    html += '</div>';
+    
+    // Sequences
+    let seqHeader = `=== Sequences (${parsedSequences.length})`;
+    if (skipCount > 0) {
+        seqHeader += ` - ${skipCount} header sequence${skipCount === 1 ? '' : 's'} skipped`;
+    }
+    seqHeader += ' ===';
+    html += `<div style="margin-top: 25px; margin-bottom: 15px;"><strong style="font-size: 14px; color: #374151;">${seqHeader}</strong></div>`;
+    
+    const showCount = Math.min(5, parsedSequences.length);
+    for (let i = 0; i < showCount; i++) {
+        const seqData = parsedSequences[i];
+        // Calculate actual sequence number (accounting for skipped sequences)
+        const actualSeqNum = i + 1 + skipCount;
+        html += `<div style="margin-left: 15px; margin-bottom: 15px; padding: 10px; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 4px;">`;
+        html += `<div style="margin-bottom: 8px;"><strong>${actualSeqNum}. ${seqData.originalId}</strong></div>`;
+        
+        if (seqData.parsedName) {
+            const sn = seqData.parsedName;
+            html += `<div style="margin: 3px 0; color: #374151;">Network: ${sn.network}, Cohort: ${sn.cohort}, PTID: ${sn.ptid}</div>`;
+            html += `<div style="margin: 3px 0; color: #374151;">Visit: ${sn.visit}, Region: ${sn.region}</div>`;
+            html += `<div style="margin: 3px 0; color: #374151;">Sequencing: ${sn.sequencingMethod}${sn.sequenceId ? '-' + sn.sequenceId : ''}</div>`;
+            if (sn.processing) {
+                html += `<div style="margin: 3px 0; color: #6b7280;">Processing: ${sn.processing}</div>`;
+            }
+            if (sn.modifiers) {
+                html += `<div style="margin: 3px 0; color: #6b7280;">Modifiers: ${sn.modifiers}</div>`;
+            }
+            if (sn.extras) {
+                html += `<div style="margin: 3px 0; color: #6b7280;">Extras: ${sn.extras}</div>`;
+            }
+            if (sn.collapsed) {
+                html += `<div style="margin: 3px 0; color: #6b7280;">Collapsed: ${sn.collapsed}</div>`;
+            }
+        } else {
+            html += `<div style="color: #ef4444; margin-top: 5px;">(parsing failed: ${seqData.parseError})</div>`;
+        }
+        
+        html += '</div>';
+    }
+    
+    if (parsedSequences.length > 5) {
+        html += `<div style="margin-left: 15px; margin-top: 10px; color: #6b7280;">... and ${parsedSequences.length - 5} more sequences</div>`;
+    }
+    
+    resultsDiv.innerHTML = html;
+    document.getElementById('parse-overlay').style.display = 'flex';
+}
+
+
+// --- Export Settings Logic ---
+function exportSettings() {
+    // Collect all current settings
+    const currentFieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
+    const currentSubfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
+    const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+    const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+    const skipSequences = state.skipSequences || 0;
+    
+    // Convert Maps to objects (keys as strings for JSON)
+    const filenameTransformations = {};
+    state.filenameRegexMap.forEach((value, key) => {
+        filenameTransformations[key.toString()] = value;
+    });
+    
+    const sequenceTransformations = {};
+    state.sequenceRegexMap.forEach((value, key) => {
+        sequenceTransformations[key.toString()] = value;
+    });
+    
+    // Get transformed filename for metadata and collapse delimiters
+    let transformedFilename = getTransformedFilename();
+    if (transformedFilename) {
+        transformedFilename = collapseDelimiters(transformedFilename, newFieldDelim, newSubfieldDelim);
+    }
+    
+    // Build settings object
+    const settings = {
+        version: "1.0",
+        metadata: {
+            original_filename: state.currentFileName || null,
+            new_filename: transformedFilename || null,
+            created: new Date().toISOString(),
+            description: "FASTA compliance transformation settings"
+        },
+        delimiters: {
+            current: {
+                field: currentFieldDelim,
+                subfield: currentSubfieldDelim
+            },
+            new: {
+                field: newFieldDelim,
+                subfield: newSubfieldDelim
+            }
+        },
+        skip_sequences: skipSequences,
+        transformations: {
+            filename: filenameTransformations,
+            sequences: sequenceTransformations
+        }
+    };
+    
+    // Convert to JSON string
+    const jsonString = JSON.stringify(settings, null, 2);
+    
+    // Create blob and download
+    const blob = new Blob([jsonString], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    
+    // Generate filename using networkProtocol from transformed filename
+    let downloadName = "fasta_compliance_transform.json";
+    if (transformedFilename) {
+        try {
+            // Parse the transformed filename to get networkProtocol
+            const nameWithoutExt = transformedFilename.replace(/\.(fasta|fa|fas)$/i, '');
+            const parts = nameWithoutExt.split('_');
+            if (parts.length > 0 && parts[0]) {
+                const networkProtocol = parts[0];
+                downloadName = `${networkProtocol}_transformations.json`;
+            }
+        } catch (e) {
+            // If parsing fails, use default name
+            console.warn("Could not extract networkProtocol from filename, using default name");
+        }
+    }
+    
+    a.download = downloadName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// --- Export Logic ---
+function collapseDelimiters(text, fieldDelim, subfieldDelim) {
+    if (!text) return text;
+    
+    // Collapse multiple consecutive field delimiters into a single one
+    const escapedFieldDelim = fieldDelim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const fieldDelimRegex = new RegExp(escapedFieldDelim + '+', 'g');
+    let result = text.replace(fieldDelimRegex, fieldDelim);
+    
+    // Collapse multiple consecutive subfield delimiters within each field
+    const escapedSubfieldDelim = subfieldDelim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const subfieldDelimRegex = new RegExp(escapedSubfieldDelim + '+', 'g');
+    result = result.split(fieldDelim).map(field => field.replace(subfieldDelimRegex, subfieldDelim)).join(fieldDelim);
+    
+    // Remove leading and trailing field delimiters
+    const leadingDelimRegex = new RegExp('^' + escapedFieldDelim + '+');
+    const trailingDelimRegex = new RegExp(escapedFieldDelim + '+$');
+    result = result.replace(leadingDelimRegex, '').replace(trailingDelimRegex, '');
+    
+    return result;
+}
+
+function exportAlignment(target) {
+    if (!state.viewSequences.length) return;
+    
+    // Check if validation has run and passed
+    let isCompliant = false;
+    if (state.validationHasRun && state.validationPassed) {
+        isCompliant = true;
+    } else {
+        // Show warning if validation hasn't run or failed
+        const message = state.validationHasRun 
+            ? "Validation has been run but the file is not compliant. Do you want to export anyway? The filename will be appended with '_notCompliant'."
+            : "Validation has not been run. Do you want to export anyway? The filename will be appended with '_notCompliant'.";
+        
+        if (!confirm(message)) {
+            return; // User cancelled
+        }
+    }
+    
+    // Get transformed filename and sequence names (as they appear in the display)
+    let transformedFilename = getTransformedFilename();
+    let transformedSequences = getTransformedSequenceNames();
+    
+    const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+    const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+    
+    // For compliant files, collapse delimiters (as validation expects)
+    // For non-compliant files, use names exactly as displayed (without collapsing)
+    if (isCompliant) {
+        if (transformedFilename) {
+            transformedFilename = collapseDelimiters(transformedFilename, newFieldDelim, newSubfieldDelim);
+        }
+        
+        transformedSequences = transformedSequences.map(seq => ({
+            ...seq,
+            name: collapseDelimiters(seq.name, newFieldDelim, newSubfieldDelim)
+        }));
+    }
+    // For non-compliant files, use names as-is (matching what's displayed in the UI)
+    
+    // Build FASTA content using transformed sequence names
+    const lines = [];
+    transformedSequences.forEach(seq => {
+        lines.push(`>${seq.name}`);
+        // Split sequence into lines of 80 characters for readability
+        const seqStr = seq.seq.join('');
+        for (let i = 0; i < seqStr.length; i += 80) {
+            lines.push(seqStr.substring(i, i + 80));
+        }
+    });
+    const content = lines.join('\n') + (lines.length ? '\n' : '');
+    
+    if(!content) return;
+
+    const blob = new Blob([content], {type: "text/plain"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    
+    // Generate filename: use transformed filename with _compliant or _notCompliant added to basename
+    let downloadName;
+    const suffix = isCompliant ? '_compliant' : '_notCompliant';
+    if (transformedFilename) {
+        const lastDot = transformedFilename.lastIndexOf('.');
+        const basename = lastDot > 0 ? transformedFilename.substring(0, lastDot) : transformedFilename;
+        const extension = lastDot > 0 ? transformedFilename.substring(lastDot) : '.fasta';
+        downloadName = `${basename}${suffix}${extension}`;
+    } else {
+        downloadName = `alignment${suffix}.fasta`;
+    }
+    
+    a.download = downloadName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function setMode(m, disableNT = false) {
+    state.mode = m;
+    if(m === 'NT') {
+        dom.btnNt.classList.add('active'); dom.btnAa.classList.remove('active');
+        dom.btnNt.disabled = false;
+        dom.btnNt.style.opacity = '1';
+    } else {
+        dom.btnAa.classList.add('active'); dom.btnNt.classList.remove('active');
+        if (disableNT) {
+            dom.btnNt.disabled = true;
+            dom.btnNt.style.opacity = '0.5';
+        } else {
+            dom.btnNt.disabled = false;
+            dom.btnNt.style.opacity = '1';
+        }
+    }
+    state.selection = null;
+    recalc();
+}
+
+function recalc() {
+    if(!state.rawSequences.length) {
+        dom.sizer.style.width = '1px';
+        dom.sizer.style.height = '1px';
+        render();
+        return;
+    }
+
+    const refSeq = state.rawSequences[state.refIndex];
+    const nonRefSequences = state.rawSequences.filter((s, idx) => idx !== state.refIndex);
+    
+    let allViewSequences;
+    if(state.mode === 'NT') {
+        const refView = refSeq ? { name: refSeq.name, seq: refSeq.seq } : null;
+        const nonRefViews = nonRefSequences.map(s => ({ name: s.name, seq: s.seq }));
+        allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
+    } else {
+        if (state.isAASequence) {
+            const refView = refSeq ? { name: refSeq.name, seq: refSeq.seq } : null;
+            const nonRefViews = nonRefSequences.map(s => ({ name: s.name, seq: s.seq }));
+            allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
+        } else {
+            const offset = state.frame - 1;
+            const refView = refSeq ? {
+                name: refSeq.name,
+                seq: (() => {
+                    const dna = refSeq.seq;
+                    const aa = [];
+                    for(let i=offset; i<dna.length; i+=3) {
+                        if(i+2 >= dna.length) break;
+                        const codon = dna.slice(i, i+3).join('');
+                        if(codon.includes('-')) aa.push('-');
+                        else if (/[^ACGT]/i.test(codon)) aa.push('X');
+                        else aa.push(CODON_TABLE[codon] || 'X');
+                    }
+                    return aa;
+                })()
+            } : null;
+            const nonRefViews = nonRefSequences.map(s => {
+                const dna = s.seq;
+                const aa = [];
+                for(let i=offset; i<dna.length; i+=3) {
+                    if(i+2 >= dna.length) break;
+                    const codon = dna.slice(i, i+3).join('');
+                    if(codon.includes('-')) aa.push('-');
+                    else if (/[^ACGT]/i.test(codon)) aa.push('X');
+                    else aa.push(CODON_TABLE[codon] || 'X');
+                }
+                return { name: s.name, seq: aa };
+            });
+            allViewSequences = refView ? [refView, ...nonRefViews] : nonRefViews;
+        }
+    }
+    
+    state.viewSequences = allViewSequences;
+    state.refIndex = 0;
+
+    let max = 0;
+    state.viewSequences.forEach(s => max = Math.max(max, s.seq.length));
+    state.maxLength = max;
+    
+    state.refMap = new Int32Array(max + 1);
+    if(state.viewSequences[state.refIndex]) {
+        const refSeq = state.viewSequences[state.refIndex].seq;
+        let count = 0;
+        for(let i=0; i<max; i++) {
+            const char = (i < refSeq.length) ? refSeq[i] : '-';
+            if(char !== '-') count++;
+            state.refMap[i] = count;
+        }
+    }
+
+    dom.sizer.style.width = (max * CONFIG.charWidth + 200) + 'px';
+    dom.sizer.style.height = (state.viewSequences.length * CONFIG.rowHeight) + 'px';
+    
+    render();
+}
+
+// --- Interactions ---
+function getCoords(e, type) {
+    let r = 0, c = 0;
+    const rect = (type==='SEQ'?dom.areaSeq:(type==='NAMES'?dom.areaNames:dom.areaRuler)).getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    if(type === 'SEQ') {
+        c = Math.floor((x + dom.areaSeq.scrollLeft) / CONFIG.charWidth);
+        r = Math.floor((y + dom.areaSeq.scrollTop) / CONFIG.rowHeight);
+    } else if (type === 'NAMES') {
+        r = Math.floor((y + dom.areaSeq.scrollTop) / CONFIG.rowHeight);
+    } else if (type === 'RULER') {
+        c = Math.floor((x + dom.areaSeq.scrollLeft) / CONFIG.charWidth);
+    }
+    return { r, c };
+}
+
+function onMouseDown(e, type) {
+    dom.areaSeq.focus();
+    
+    const { r, c } = getCoords(e, type);
+    const maxR = Math.max(0, state.viewSequences.length - 1);
+    const safeR = Math.min(r, maxR);
+    const safeC = Math.max(0, c);
+
+    state.mouse.isDown = true;
+    state.mouse.startR = safeR;
+    state.mouse.startC = safeC;
+    state.mouse.lastHoverC = safeC;
+    state.mouse.target = type;
+    state.selectionAnchor = { r: safeR, c: safeC };
+
+    if(type === 'SEQ') {
+        state.selection = { r1: safeR, c1: safeC, r2: safeR, c2: safeC };
+    } else if (type === 'NAMES') {
+        state.selection = { r1: safeR, r2: safeR, c1: 0, c2: 99999999 }; 
+    } else if (type === 'RULER') {
+        const maxR = state.viewSequences.length - 1;
+        state.selection = { r1: 0, r2: maxR, c1: safeC, c2: safeC };
+    }
+    
+    render();
+}
+
+window.addEventListener('mousemove', (e) => {
+    if(!state.mouse.isDown) return;
+    
+    const { r, c } = getCoords(e, state.mouse.target);
+    const maxR = Math.max(0, state.viewSequences.length - 1);
+    const safeR = Math.min(r, maxR);
+    const safeC = Math.max(0, c);
+    
+    if(state.mouse.target === 'SEQ') {
+        state.selection = {
+            r1: Math.min(state.mouse.startR, safeR),
+            r2: Math.max(state.mouse.startR, safeR),
+            c1: Math.min(state.mouse.startC, safeC),
+            c2: Math.max(state.mouse.startC, safeC)
+        };
+    } else if (state.mouse.target === 'NAMES') {
+        state.selection = {
+            r1: Math.min(state.mouse.startR, safeR),
+            r2: Math.max(state.mouse.startR, safeR),
+            c1: 0,
+            c2: 99999999
+        };
+    } else if (state.mouse.target === 'RULER') {
+        const maxR = state.viewSequences.length - 1;
+        state.selection = {
+            r1: 0,
+            r2: maxR,
+            c1: Math.min(state.mouse.startC, safeC),
+            c2: Math.max(state.mouse.startC, safeC)
+        };
+    }
+    
+    render();
+});
+
+window.addEventListener('mouseup', () => {
+    state.mouse.isDown = false;
+});
+
+// --- Field Parsing Functions ---
+function parseFields(text, fieldDelim, subfieldDelim) {
+    // Parse text into fields and subfields
+    // Returns array of {text: string, fieldIndex: number, subfieldIndex: number|null, startPos: number, endPos: number}
+    const result = [];
+    if (!text) return result;
+    
+    // Strip file extension (.fasta, .fa, .fas) before parsing
+    const textWithoutExt = text.replace(/\.(fasta|fa|fas)$/i, '');
+    
+    const fields = textWithoutExt.split(fieldDelim);
+    let currentPos = 0;
+    
+    fields.forEach((field, fieldIdx) => {
+        if (fieldIdx > 0) {
+            // Add delimiter
+            result.push({
+                text: fieldDelim,
+                fieldIndex: fieldIdx - 1,
+                subfieldIndex: null,
+                startPos: currentPos,
+                endPos: currentPos + fieldDelim.length,
+                isDelimiter: true
+            });
+            currentPos += fieldDelim.length;
+        }
+        
+        // Parse subfields within this field
+        const subfields = field.split(subfieldDelim);
+        subfields.forEach((subfield, subfieldIdx) => {
+            if (subfieldIdx > 0) {
+                // Add subfield delimiter
+                result.push({
+                    text: subfieldDelim,
+                    fieldIndex: fieldIdx,
+                    subfieldIndex: subfieldIdx - 1,
+                    startPos: currentPos,
+                    endPos: currentPos + subfieldDelim.length,
+                    isDelimiter: true
+                });
+                currentPos += subfieldDelim.length;
+            }
+            
+            // Add subfield content
+            if (subfield) {
+                result.push({
+                    text: subfield,
+                    fieldIndex: fieldIdx,
+                    subfieldIndex: subfieldIdx,
+                    startPos: currentPos,
+                    endPos: currentPos + subfield.length,
+                    isDelimiter: false
+                });
+                currentPos += subfield.length;
+            }
+        });
+    });
+    
+    return result;
+}
+
+function updateFieldParsing() {
+    // Get current delimiter values from input boxes
+    const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
+    const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
+    
+    // Update state with current values
+    state.fieldDelimiter = fieldDelim;
+    state.subfieldDelimiter = subfieldDelim;
+    
+    // Parse filename fields
+    if (state.currentFileName) {
+        state.filenameFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
+    } else {
+        state.filenameFields = [];
+    }
+    
+    // Parse sequence name fields (use first sequence as example)
+    if (state.rawSequences.length > 0) {
+        const firstSeqName = state.rawSequences[0].name || '';
+        state.sequenceFields = parseFields(firstSeqName, fieldDelim, subfieldDelim);
+        
+        // Initialize regex maps with identity regex for all fields
+        state.sequenceFields.forEach(part => {
+            if (!part.isDelimiter && part.fieldIndex !== undefined) {
+                if (!state.sequenceRegexMap.has(part.fieldIndex)) {
+                    state.sequenceRegexMap.set(part.fieldIndex, '(.*)');
+                }
+            }
+        });
+    } else {
+        state.sequenceFields = [];
+    }
+    
+    // Initialize filename regex map with identity regex
+    state.filenameFields.forEach(part => {
+        if (!part.isDelimiter && part.fieldIndex !== undefined) {
+            if (!state.filenameRegexMap.has(part.fieldIndex)) {
+                state.filenameRegexMap.set(part.fieldIndex, '(.*)');
+            }
+        }
+    });
+    
+    // Update legend
+    updateLegend();
+}
+
+function applyRegexTransform(text, regexPattern) {
+    if (!text || !regexPattern) {
+        return text;
+    }
+    
+    // Check if it's a replacement pattern: s/pattern/replacement/ (replacement can be empty)
+    const replacementMatch = regexPattern.match(/^s\/(.+)\/(.*)\/$/);
+    if (replacementMatch) {
+        try {
+            const pattern = replacementMatch[1];
+            let replacement = replacementMatch[2]; // Can be empty string
+            
+            // Escape any $ signs that aren't part of $1, $2, etc. patterns
+            // But preserve $1, $2, $3, etc. as capture group references
+            // We need to escape literal $ signs that aren't followed by a digit
+            replacement = replacement.replace(/\$(?!\d)/g, '$$$$'); // Escape literal $ to $$
+            
+            // Use non-global regex to replace only once (or entire string if pattern matches whole string)
+            const regexObj = new RegExp(pattern);
+            const result = text.replace(regexObj, replacement);
+            return result;
+        } catch (e) {
+            // Invalid regex, return original
+            return text;
+        }
+    }
+    
+    // Otherwise, treat as capture group regex (backward compatibility)
+    try {
+        const regexObj = new RegExp(regexPattern);
+        const match = text.match(regexObj);
+        if (match && match[1]) {
+            return match[1];
+        } else {
+            return text;
+        }
+    } catch (e) {
+        return text;
+    }
+}
+
+function amalgamateOptionalFields(text, fieldDelim, subfieldDelim) {
+    /**
+     * Amalgamate repeated optional fields in a transformed string.
+     * Example: "_e-05_e-07" becomes "_e-05-07"
+     * 
+     * @param {string} text - The transformed text
+     * @param {string} fieldDelim - Field delimiter
+     * @param {string} subfieldDelim - Subfield delimiter
+     * @returns {string} - Text with repeated optional fields amalgamated
+     */
+    if (!text) return text;
+    
+    const validFlags = ['a', 'f', 'm', 'w', 'o', 's', 'p', 'e', 'r'];
+    const fields = text.split(fieldDelim);
+    const groupedFields = new Map(); // flag -> array of values
+    const resultFields = [];
+    
+    for (let i = 0; i < fields.length; i++) {
+        const field = fields[i];
+        if (!field) {
+            // Empty field, keep as is
+            resultFields.push(field);
+            continue;
+        }
+        
+        // Check if this is an optional field (starts with flag-)
+        let isOptional = false;
+        let flag = null;
+        let value = null;
+        
+        for (const f of validFlags) {
+            if (field.startsWith(f + subfieldDelim)) {
+                isOptional = true;
+                flag = f;
+                value = field.substring(f.length + subfieldDelim.length);
+                break;
+            }
+        }
+        
+        if (isOptional) {
+            // Group this optional field
+            if (!groupedFields.has(flag)) {
+                groupedFields.set(flag, []);
+            }
+            groupedFields.get(flag).push(value);
+        } else {
+            // Non-optional field - flush any grouped optional fields before this one
+            if (groupedFields.size > 0) {
+                for (const [f, values] of groupedFields.entries()) {
+                    const amalgamated = f + subfieldDelim + values.join(subfieldDelim);
+                    resultFields.push(amalgamated);
+                }
+                groupedFields.clear();
+            }
+            resultFields.push(field);
+        }
+    }
+    
+    // Flush any remaining grouped optional fields at the end
+    if (groupedFields.size > 0) {
+        for (const [f, values] of groupedFields.entries()) {
+            const amalgamated = f + subfieldDelim + values.join(subfieldDelim);
+            resultFields.push(amalgamated);
+        }
+    }
+    
+    return resultFields.join(fieldDelim);
+}
+
+function transformSequenceName(seqName, sequenceIndex) {
+    if (!seqName) return seqName;
+    
+    // Skip transformation if this sequence is in the skip range
+    if (sequenceIndex !== undefined && sequenceIndex < state.skipSequences) {
+        return seqName; // Return original name unchanged
+    }
+    
+    const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
+    const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
+    const seqFields = parseFields(seqName, fieldDelim, subfieldDelim);
+    
+    if (seqFields.length === 0) return seqName;
+    
+    // First pass: transform all fields and mark empty ones
+    const transformedFields = seqFields.map((part, idx) => {
+        if (part.isDelimiter) {
+            return { ...part, isEmpty: false };
+        } else {
+            const regex = state.sequenceRegexMap.get(part.fieldIndex) || '(.*)';
+            const transformed = applyRegexTransform(part.text, regex);
+            return { ...part, transformed, isEmpty: transformed === '' };
+        }
+    });
+    
+    // Second pass: build output, skipping empty fields and their adjacent delimiters
+    // Use NEW delimiters for joining the transformed fields
+    const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+    const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+    let transformedParts = [];
+    transformedFields.forEach((part, idx) => {
+        if (part.isDelimiter) {
+            // Check if adjacent fields are empty
+            const prevField = idx > 0 ? transformedFields[idx - 1] : null;
+            const nextField = idx < transformedFields.length - 1 ? transformedFields[idx + 1] : null;
+            const prevIsEmpty = prevField && !prevField.isDelimiter && prevField.isEmpty;
+            const nextIsEmpty = nextField && !nextField.isDelimiter && nextField.isEmpty;
+            
+            // Always include delimiters (even if adjacent fields are empty)
+            // They will be collapsed later if there are multiple consecutive ones
+            if (part.subfieldIndex === null || part.subfieldIndex === undefined) {
+                // This is a field delimiter
+                transformedParts.push(newFieldDelim);
+            } else {
+                // This is a subfield delimiter
+                transformedParts.push(newSubfieldDelim);
+            }
+        } else {
+            // Only include non-empty fields
+            if (!part.isEmpty) {
+                transformedParts.push(part.transformed);
+            }
+        }
+    });
+    
+    let result = transformedParts.join('');
+    
+    // Amalgamate repeated optional fields
+    result = amalgamateOptionalFields(result, newFieldDelim, newSubfieldDelim);
+    
+    // Don't collapse delimiters here - keep them as-is for mapping purposes
+    // Delimiter collapsing will be done on export
+    
+    return result;
+}
+
+function updateColoredFilename() {
+    if (!dom.filenameText || !state.currentFileName) {
+        if (dom.filenameText) dom.filenameText.textContent = 'no file loaded yet';
+        if (dom.filenameNewText) dom.filenameNewText.textContent = 'no file loaded yet';
+        return;
+    }
+    
+    // Get current delimiter values from input boxes
+    const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
+    const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
+    const filenameFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
+    
+    if (filenameFields.length === 0) {
+        // If no fields parsed, just show plain text
+        dom.filenameText.textContent = state.currentFileName;
+        return;
+    }
+    
+    // Build colored filename HTML
+    let html = '';
+    filenameFields.forEach(part => {
+        if (part.isDelimiter) {
+            html += `<span style="color: #6b7280;">${part.text}</span>`;
+        } else {
+            const fieldColor = getFieldColor(part.fieldIndex, part.subfieldIndex);
+            html += `<span style="background: ${fieldColor}; padding: 2px 4px; border-radius: 3px; color: #000000;">${part.text}</span>`;
+        }
+    });
+    
+    dom.filenameText.innerHTML = html;
+    
+    // Update transformed filename
+    updateTransformedFilename();
+}
+
+function updateTransformedFilename() {
+    if (!dom.filenameNewText || !state.currentFileName) {
+        if (dom.filenameNewText) dom.filenameNewText.textContent = 'no file loaded yet';
+        return;
+    }
+    
+    // Get current delimiter values
+    const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
+    const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
+    const filenameFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
+    
+    if (filenameFields.length === 0) {
+        dom.filenameNewText.textContent = state.currentFileName;
+        return;
+    }
+    
+    // Apply regex transformations to each field and build colored HTML
+    let transformedParts = [];
+    let html = '';
+    
+    // First pass: transform all fields and mark empty ones
+    const transformedFields = filenameFields.map((part, idx) => {
+        if (part.isDelimiter) {
+            return { ...part, isEmpty: false };
+        } else {
+            const regex = state.filenameRegexMap.get(part.fieldIndex) || '(.*)';
+            const transformed = applyRegexTransform(part.text, regex);
+            return { ...part, transformed, isEmpty: transformed === '' };
+        }
+    });
+    
+    // Second pass: build output, skipping empty fields but keeping delimiters
+    // Use NEW delimiters for joining
+    const newFieldDelimForDisplay = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+    const newSubfieldDelimForDisplay = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+    
+    transformedFields.forEach((part, idx) => {
+        if (part.isDelimiter) {
+            // Always include delimiters (even if adjacent fields are empty)
+            // They will be collapsed later if there are multiple consecutive ones
+            if (part.subfieldIndex === null || part.subfieldIndex === undefined) {
+                transformedParts.push(newFieldDelimForDisplay);
+            } else {
+                transformedParts.push(newSubfieldDelimForDisplay);
+            }
+        } else {
+            // Only include non-empty fields
+            if (!part.isEmpty) {
+                transformedParts.push(part.transformed);
+            }
+        }
+    });
+    
+    let transformedText = transformedParts.join('');
+    
+    // Don't collapse delimiters here - keep them as-is for mapping purposes
+    // Delimiter collapsing will be done on export
+    const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+    const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+    
+    // Rebuild HTML - split by delimiter and handle empty fields as "deleted"
+    const parts = transformedText.split(newFieldDelim);
+    html = '';
+    parts.forEach((part, idx) => {
+        if (idx > 0) {
+            html += `<span style="color: #6b7280;">${newFieldDelim}</span>`;
+        }
+        if (part === '') {
+            // Empty field - show as "deleted"
+            html += `<span style="background: #e5e7eb; padding: 2px 4px; border-radius: 3px; color: #6b7280; font-style: italic;">deleted</span>`;
+        } else if (part) {
+            // Split by subfield delimiter for coloring
+            const subParts = part.split(newSubfieldDelim);
+            subParts.forEach((subPart, subIdx) => {
+                if (subIdx > 0) {
+                    html += `<span style="color: #6b7280;">${newSubfieldDelim}</span>`;
+                }
+                if (subPart) {
+                    // Use approximate field index for coloring
+                    const fieldColor = getFieldColor(idx, subIdx > 0 ? subIdx - 1 : null);
+                    html += `<span style="background: ${fieldColor}; padding: 2px 4px; border-radius: 3px; color: #000000;">${subPart}</span>`;
+                }
+            });
+        }
+    });
+    
+    dom.filenameNewText.innerHTML = html;
+}
+
+function matchSequenceFieldToStandardSpec(fieldValue, fieldIndex, allFields) {
+    // Try to match a sequence field value against ALL standard sequence spec fields
+    // Returns array of matching standard field names (can match multiple)
+    const matches = [];
+    
+    // Get the full field text (including subfields if any)
+    let fullFieldText = fieldValue;
+    const fieldParts = allFields.filter(p => !p.isDelimiter && p.fieldIndex === fieldIndex);
+    if (fieldParts.length > 1) {
+        // Reconstruct full field including subfields
+        fullFieldText = fieldParts.map(p => p.text).join(state.subfieldDelimiter);
+    }
+    
+    // Check ALL standard sequence spec fields, not just by position
+    
+    // Check networkCohort: starts with uppercase letter
+    if (/^[A-Z]/.test(fullFieldText)) {
+        matches.push('networkCohort');
+    }
+    
+    // Check ptid: CAP### or 4-6 digits
+    if (PTID_PATTERN.test(fullFieldText)) {
+        matches.push('ptid');
+    }
+    
+    // Check visit: 4 digits or dash-separated
+    if (VISIT_PATTERN.test(fullFieldText)) {
+        matches.push('visit');
+    }
+    
+    // Check region: env, pol, gag, nef, ren, gp
+    if (VALID_REGIONS.includes(fullFieldText.toLowerCase())) {
+        matches.push('region');
+    }
+    
+    // Check sequencingMethodId: sequencing method (pb, sa, np, il, sy) optionally followed by -sequenceId
+    const parts = fullFieldText.split('-');
+    if (VALID_SEQUENCING_METHODS.includes(parts[0].toLowerCase())) {
+        matches.push('sequencingMethodId');
+    }
+    
+    // Check optional fields
+    if (fullFieldText.startsWith('p-')) {
+        matches.push('processing');
+    }
+    if (fullFieldText.startsWith('m-')) {
+        matches.push('modifiers');
+    }
+    if (fullFieldText.startsWith('e-')) {
+        matches.push('extras');
+    }
+    if (fullFieldText.startsWith('coll-')) {
+        matches.push('collapsed');
+    }
+    
+    return matches;
+}
+
+function matchFieldToStandardSpec(fieldValue, fieldIndex, allFields) {
+    // Try to match a field value against ALL standard filename spec fields
+    // Returns array of matching standard field names (can match multiple)
+    const matches = [];
+    
+    // Get the full field text (including subfields if any)
+    let fullFieldText = fieldValue;
+    const fieldParts = allFields.filter(p => !p.isDelimiter && p.fieldIndex === fieldIndex);
+    if (fieldParts.length > 1) {
+        // Reconstruct full field including subfields
+        fullFieldText = fieldParts.map(p => p.text).join(state.subfieldDelimiter);
+    }
+    
+    // If this is an optional field position (fieldIndex >= 5), it must start with a valid flag
+    const validFlags = ['a', 'f', 'm', 'w', 'o', 's', 'p', 'e', 'r'];
+    if (fieldIndex >= 5) {
+        const hasValidFlag = validFlags.some(flag => fullFieldText.startsWith(flag + '-'));
+        if (!hasValidFlag) {
+            // Invalid optional field - don't try to match it
+            return [];
+        }
+    }
+    
+    // Check ALL standard filename spec fields, not just by position
+    
+    // Check networkProtocol: starts with uppercase letter followed by 3-4 digits, optionally followed by letter
+    if (/^[A-Z]\d{3,4}[A-Z]?$/.test(fullFieldText)) {
+        matches.push('networkProtocol');
+    }
+    
+    // Check ptid: CAP### or 4-6 digits
+    if (PTID_PATTERN.test(fullFieldText)) {
+        matches.push('ptid');
+    }
+    
+    // Check visit: 4 digits or dash-separated
+    if (VISIT_PATTERN.test(fullFieldText)) {
+        matches.push('visit');
+    }
+    
+    // Check region: env, pol, gag, nef, ren, gp
+    if (VALID_REGIONS.includes(fullFieldText.toLowerCase())) {
+        matches.push('region');
+    }
+    
+    // Check molecule: aa, nt
+    if (VALID_MOLECULES.includes(fullFieldText.toLowerCase())) {
+        matches.push('molecule');
+    }
+    
+    // Check optional fields: start with flag-
+    if (fullFieldText.startsWith('a-')) {
+        matches.push('alignment');
+    }
+    if (fullFieldText.startsWith('f-')) {
+        matches.push('filters');
+    }
+    if (fullFieldText.startsWith('m-')) {
+        matches.push('modifiers');
+    }
+    if (fullFieldText.startsWith('w-')) {
+        matches.push('additions');
+    }
+    if (fullFieldText.startsWith('o-')) {
+        matches.push('removals');
+    }
+    if (fullFieldText.startsWith('s-')) {
+        matches.push('sequencing');
+    }
+    if (fullFieldText.startsWith('p-')) {
+        matches.push('processing');
+    }
+    if (fullFieldText.startsWith('e-')) {
+        matches.push('extras');
+    }
+    if (fullFieldText.startsWith('r-')) {
+        matches.push('reviewed');
+    }
+    
+    return matches;
+}
+
+function updateLegend() {
+    if (!dom.fieldLegendPopup || !dom.legendFilenameContent || !dom.legendSequencesContent) return;
+    
+    // Compute transformed filename fields
+    let transformedFilenameFields = [];
+    const originalFieldToNewFields = new Map(); // originalFieldIndex -> array of {newFieldIdx, transformedValue}
+    const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
+    const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
+    
+    if (state.currentFileName) {
+        const filenameFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
+        
+        // Apply transformations to get transformed fields
+        filenameFields.forEach(part => {
+            if (part.isDelimiter) {
+                transformedFilenameFields.push(part);
+            } else {
+                const regex = state.filenameRegexMap.get(part.fieldIndex) || '(.*)';
+                const transformed = applyRegexTransform(part.text, regex);
+                transformedFilenameFields.push({
+                    ...part,
+                    text: transformed,
+                    originalText: part.text
+                });
+            }
+        });
+        
+        // Re-parse the transformed filename to get proper field structure
+        // Use NEW delimiters for re-parsing since the transformed name uses new delimiters
+        const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+        const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+        const transformedFilename = transformedFilenameFields.map(p => p.text).join('');
+        transformedFilenameFields = parseFields(transformedFilename, newFieldDelim, newSubfieldDelim);
+        
+        // Map original field indices to new field indices after transformation
+        // Build transformed string step by step to track positions
+        // (newFieldDelim already declared above)
+        let transformedStringPos = 0;
+        const originalFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
+        originalFields.forEach(part => {
+            if (part.isDelimiter) {
+                transformedStringPos += part.text.length;
+            } else {
+                const regex = state.filenameRegexMap.get(part.fieldIndex) || '(.*)';
+                const transformed = applyRegexTransform(part.text, regex);
+                
+                // Check if this transformed field contains the NEW field delimiter (new field introduced)
+                if (transformed.includes(newFieldDelim)) {
+                    // This field was split - find which new field indices correspond to it
+                    // The first part starts at transformedStringPos in the transformed string
+                    const firstPartStartPos = transformedStringPos;
+                    
+                    // Find which field in the re-parsed structure contains this position
+                    const fieldAtPos = transformedFilenameFields.find(p => 
+                        !p.isDelimiter && p.startPos <= firstPartStartPos && p.endPos > firstPartStartPos
+                    );
+                    if (fieldAtPos) {
+                        // Get all consecutive field indices starting from this one
+                        const startFieldIdx = fieldAtPos.fieldIndex;
+                        const subParts = transformed.split(newFieldDelim);
+                        const newFieldIndices = [];
+                        for (let i = 0; i < subParts.length; i++) {
+                            newFieldIndices.push(startFieldIdx + i);
+                        }
+                        
+                        originalFieldToNewFields.set(part.fieldIndex, {
+                            newFieldIndices: newFieldIndices,
+                            transformedValue: transformed
+                        });
+                    }
+                }
+                transformedStringPos += transformed.length;
+            }
+        });
+    }
+    
+    // Build filename legend with standard spec matches (using ORIGINAL field indices)
+    // Map: originalFieldIndex -> {color, matches, regex}
+    const originalFilenameFieldMap = new Map(); // originalFieldIndex -> {color, matches}
+    const usedFilenameFields = new Set(); // Track which standard fields have been used (non-optional only)
+    
+    // Helper function to check if a field is optional (can be repeated)
+    const isOptionalFilenameField = (fieldName) => {
+        const optionalFields = ['alignment', 'filters', 'modifiers', 'additions', 'removals', 'sequencing', 'processing', 'extras', 'reviewed'];
+        return optionalFields.includes(fieldName);
+    };
+    
+    // Create mapping from new field indices to original field indices
+    // Use the actual transformed filename to get accurate positions
+    const newToOriginalFieldMap = new Map(); // newFieldIdx -> originalFieldIdx
+    let transformedFilename = null; // Declare outside if block for use later
+    if (state.currentFileName) {
+        const originalFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
+        const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+        
+        // Get the actual transformed filename (built the same way as getTransformedFilename)
+        transformedFilename = getTransformedFilename();
+        if (transformedFilename) {
+            // For each original field, find where its transformed value appears in the transformed filename
+            let searchStartPos = 0;
+            originalFields.forEach(part => {
+                if (!part.isDelimiter) {
+                    const regex = state.filenameRegexMap.get(part.fieldIndex) || '(.*)';
+                    const transformed = applyRegexTransform(part.text, regex);
+                    
+                    if (transformed && transformed !== '') {
+                        if (transformed.includes(newFieldDelim)) {
+                            // This field was split - map all new field indices to the original field index
+                            const subParts = transformed.split(newFieldDelim);
+                            // Find the position of the first part in the transformed filename
+                            const firstPart = subParts[0];
+                            const firstPartPos = transformedFilename.indexOf(firstPart, searchStartPos);
+                            if (firstPartPos >= 0) {
+                                // Find which field in the re-parsed structure contains this position
+                                const fieldAtPos = transformedFilenameFields.find(fp => 
+                                    !fp.isDelimiter && fp.startPos <= firstPartPos && fp.endPos > firstPartPos
+                                );
+                                if (fieldAtPos) {
+                                    const startFieldIdx = fieldAtPos.fieldIndex;
+                                    for (let i = 0; i < subParts.length; i++) {
+                                        newToOriginalFieldMap.set(startFieldIdx + i, part.fieldIndex);
+                                    }
+                                }
+                                searchStartPos = firstPartPos + transformed.length;
+                            }
+                        } else {
+                            // Normal field - find which new field index corresponds to it
+                            const fieldPos = transformedFilename.indexOf(transformed, searchStartPos);
+                            if (fieldPos >= 0) {
+                                const fieldAtPos = transformedFilenameFields.find(fp => 
+                                    !fp.isDelimiter && fp.startPos <= fieldPos && fp.endPos > fieldPos
+                                );
+                                if (fieldAtPos) {
+                                    newToOriginalFieldMap.set(fieldAtPos.fieldIndex, part.fieldIndex);
+                                }
+                                searchStartPos = fieldPos + transformed.length;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+    
+    // Process all original fields in order
+    if (state.currentFileName) {
+        const originalFields = parseFields(state.currentFileName, fieldDelim, subfieldDelim);
+        const sortedOriginalIndices = Array.from(new Set(originalFields
+            .filter(p => !p.isDelimiter && p.fieldIndex !== undefined)
+            .map(p => p.fieldIndex)))
+            .sort((a, b) => a - b);
+        
+        sortedOriginalIndices.forEach(originalFieldIdx => {
+            const color = FIELD_COLORS[originalFieldIdx % FIELD_COLORS.length];
+            
+            // Check if this original field was split
+            const splitData = originalFieldToNewFields.get(originalFieldIdx);
+            if (splitData) {
+                // Field was split - match each part
+                // Use NEW delimiter for splitting since that's what was used when joining
+                const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+                const subParts = splitData.transformedValue.split(newFieldDelim);
+                const allMatches = [];
+                    subParts.forEach((subPart, partIdx) => {
+                        const matches = matchFieldToStandardSpec(subPart, originalFieldIdx, transformedFilenameFields);
+                        if (allMatches.length < subParts.length) {
+                            for (const m of matches) {
+                                // Allow optional fields to be matched multiple times
+                                if (!allMatches.includes(m) && (isOptionalFilenameField(m) || !usedFilenameFields.has(m))) {
+                                    allMatches.push(m);
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                    originalFilenameFieldMap.set(originalFieldIdx, {
+                        color: color,
+                        matches: allMatches.length > 0 ? allMatches : null
+                    });
+                    // Only mark non-optional fields as used
+                    allMatches.forEach(m => {
+                        if (!isOptionalFilenameField(m)) {
+                            usedFilenameFields.add(m);
+                        }
+                    });
+                } else {
+                    // Normal field - find the corresponding new field and match it
+                    const newFieldIdx = Array.from(newToOriginalFieldMap.entries())
+                        .find(([newIdx, origIdx]) => origIdx === originalFieldIdx)?.[0];
+                    
+                    if (newFieldIdx !== undefined) {
+                        const fieldParts = transformedFilenameFields.filter(p => !p.isDelimiter && p.fieldIndex === newFieldIdx);
+                        // Use NEW subfield delimiter for joining since transformed fields use new delimiters
+                        const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+                        const fieldValue = fieldParts.map(p => p.text).join(newSubfieldDelim);
+                        const allMatches = matchFieldToStandardSpec(fieldValue, newFieldIdx, transformedFilenameFields);
+                        // Allow optional fields to be matched multiple times
+                        const availableMatches = allMatches.filter(m => isOptionalFilenameField(m) || !usedFilenameFields.has(m));
+                        const firstMatch = availableMatches.length > 0 ? availableMatches[0] : null;
+                        originalFilenameFieldMap.set(originalFieldIdx, {
+                            color: color,
+                            matches: firstMatch
+                        });
+                        // Only mark non-optional fields as used
+                        if (firstMatch && !isOptionalFilenameField(firstMatch)) {
+                            usedFilenameFields.add(firstMatch);
+                        }
+                    } else {
+                        // Check if this field was removed (transformed to empty string)
+                        const originalFieldParts = originalFields.filter(p => !p.isDelimiter && p.fieldIndex === originalFieldIdx);
+                        if (originalFieldParts.length > 0) {
+                            const regex = state.filenameRegexMap.get(originalFieldIdx) || '(.*)';
+                            const transformed = applyRegexTransform(originalFieldParts[0].text, regex);
+                            if (transformed === '') {
+                                // Field was removed
+                                originalFilenameFieldMap.set(originalFieldIdx, {
+                                    color: color,
+                                    matches: 'deleted'
+                                });
+                            } else {
+                                originalFilenameFieldMap.set(originalFieldIdx, {
+                                    color: color,
+                                    matches: null
+                                });
+                            }
+                        } else {
+                            originalFilenameFieldMap.set(originalFieldIdx, {
+                                color: color,
+                                matches: null
+                            });
+                        }
+                    }
+                }
+        });
+    }
+    
+    let filenameHtml = '';
+    if (originalFilenameFieldMap.size > 0) {
+        const sortedOriginalIndices = Array.from(originalFilenameFieldMap.keys()).sort((a, b) => a - b);
+        sortedOriginalIndices.forEach(originalFieldIdx => {
+            const fieldData = originalFilenameFieldMap.get(originalFieldIdx);
+            const match = fieldData.matches;
+            // match can be a string (single match) or array (multiple matches from split field)
+            const matchText = Array.isArray(match) ? (match.length > 0 ? match.join('+') : '?') : (match || '?');
+            const regexKey = `filename-${originalFieldIdx}`;
+            const currentRegex = state.filenameRegexMap.get(originalFieldIdx) || '(.*)';
+            filenameHtml += `<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <div style="width: 16px; height: 16px; background: ${fieldData.color}; border: 1px solid #d1d5db; border-radius: 3px; flex-shrink: 0;"></div>
+                <span style="color: #374151; flex: 1;">${originalFieldIdx + 1}: ${matchText}</span>
+                <input type="text" id="regex-${regexKey}" value="${currentRegex}" style="width: 80px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 3px; font-size: 11px; font-family: 'Courier New', monospace;" placeholder="(.*)">
+            </div>`;
+        });
+    } else {
+        filenameHtml = '';
+    }
+    dom.legendFilenameContent.innerHTML = filenameHtml;
+    
+    // Store regex values from inputs (but don't apply yet - wait for Apply button)
+    if (originalFilenameFieldMap.size > 0) {
+        const sortedOriginalIndices = Array.from(originalFilenameFieldMap.keys()).sort((a, b) => a - b);
+        sortedOriginalIndices.forEach(originalFieldIdx => {
+            const regexKey = `filename-${originalFieldIdx}`;
+            const input = document.getElementById(`regex-${regexKey}`);
+            if (input) {
+                // Just store the value as user types, but don't apply transformations
+                input.addEventListener('input', (e) => {
+                    const regex = e.target.value || '(.*)';
+                    state.filenameRegexMap.set(originalFieldIdx, regex);
+                });
+            }
+        });
+    }
+    
+    // Build sequence legend with standard spec matches (using TRANSFORMED fields)
+    // First, get the first non-skipped sequence and transform it
+    let transformedSequenceFields = [];
+    const originalSequenceFieldToNewFields = new Map(); // originalFieldIndex -> array of {newFieldIdx, transformedValue}
+    if (state.rawSequences.length > 0) {
+        // Find first non-skipped sequence
+        let exampleSeqIndex = state.skipSequences || 0;
+        if (exampleSeqIndex >= state.rawSequences.length) {
+            exampleSeqIndex = Math.max(0, state.rawSequences.length - 1);
+        }
+        
+        if (exampleSeqIndex >= 0 && exampleSeqIndex < state.rawSequences.length) {
+            const exampleSeqName = state.rawSequences[exampleSeqIndex].name || '';
+            const sequenceFields = parseFields(exampleSeqName, fieldDelim, subfieldDelim);
+            
+            // Apply transformations to get transformed fields
+            sequenceFields.forEach(part => {
+                if (part.isDelimiter) {
+                    transformedSequenceFields.push(part);
+                } else {
+                    const regex = state.sequenceRegexMap.get(part.fieldIndex) || '(.*)';
+                    const transformed = applyRegexTransform(part.text, regex);
+                    transformedSequenceFields.push({
+                        ...part,
+                        text: transformed,
+                        originalText: part.text
+                    });
+                }
+            });
+            
+            // Re-parse the transformed sequence name to get proper field structure
+            // Use NEW delimiters for re-parsing since the transformed name uses new delimiters
+            // IMPORTANT: Use transformSequenceName() to get the correctly transformed name with new delimiters
+            const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+            const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+            const transformedSequenceName = transformSequenceName(exampleSeqName, exampleSeqIndex);
+            transformedSequenceFields = parseFields(transformedSequenceName, newFieldDelim, newSubfieldDelim);
+            
+            // Map original field indices to new field indices after transformation
+            // Build transformed string step by step to track positions
+            let transformedStringPos = 0;
+            sequenceFields.forEach(part => {
+                if (part.isDelimiter) {
+                    transformedStringPos += part.text.length;
+                } else {
+                    const regex = state.sequenceRegexMap.get(part.fieldIndex) || '(.*)';
+                    const transformed = applyRegexTransform(part.text, regex);
+                    
+                    // Check if this transformed field contains the field delimiter (new field introduced)
+                    if (transformed.includes(fieldDelim)) {
+                        // This field was split - find which new field indices correspond to it
+                        // The first part starts at transformedStringPos in the transformed string
+                        const firstPartStartPos = transformedStringPos;
+                        
+                        // Find which field in the re-parsed structure contains this position
+                        const fieldAtPos = transformedSequenceFields.find(p => 
+                            !p.isDelimiter && p.startPos <= firstPartStartPos && p.endPos > firstPartStartPos
+                        );
+                        if (fieldAtPos) {
+                            // Get all consecutive field indices starting from this one
+                            const startFieldIdx = fieldAtPos.fieldIndex;
+                            const subParts = transformed.split(newFieldDelim);
+                            const newFieldIndices = [];
+                            for (let i = 0; i < subParts.length; i++) {
+                                newFieldIndices.push(startFieldIdx + i);
+                            }
+                            
+                            originalSequenceFieldToNewFields.set(part.fieldIndex, {
+                                newFieldIndices: newFieldIndices,
+                                transformedValue: transformed
+                            });
+                        }
+                    }
+                    transformedStringPos += transformed.length;
+                }
+            });
+        }
+    }
+    
+    // Build sequence legend with standard spec matches (using ORIGINAL field indices)
+    // Map: originalFieldIndex -> {color, matches, regex}
+    const originalSequenceFieldMap = new Map(); // originalFieldIndex -> {color, matches}
+    const usedSequenceFields = new Set(); // Track which standard fields have been used (non-optional only)
+    
+    // Helper function to check if a field is optional (can be repeated)
+    const isOptionalField = (fieldName) => {
+        const optionalFields = ['alignment', 'filters', 'modifiers', 'additions', 'removals', 'sequencing', 'processing', 'extras', 'reviewed', 'collapsed'];
+        return optionalFields.includes(fieldName);
+    };
+    
+    // Create mapping from new field indices to original field indices
+    // Use the actual transformed sequence name to get accurate positions
+    const newToOriginalSequenceFieldMap = new Map(); // newFieldIdx -> originalFieldIdx
+    if (state.rawSequences.length > 0) {
+        let exampleSeqIndex = state.skipSequences || 0;
+        if (exampleSeqIndex >= state.rawSequences.length) {
+            exampleSeqIndex = Math.max(0, state.rawSequences.length - 1);
+        }
+        
+        if (exampleSeqIndex >= 0 && exampleSeqIndex < state.rawSequences.length) {
+            const exampleSeqName = state.rawSequences[exampleSeqIndex].name || '';
+            const originalSequenceFields = parseFields(exampleSeqName, fieldDelim, subfieldDelim);
+            const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+            
+            // Get the actual transformed sequence name (built the same way as transformSequenceName)
+            const transformedSequenceName = transformSequenceName(exampleSeqName, exampleSeqIndex);
+            
+            if (transformedSequenceName) {
+                // For each original field, find where its transformed value appears in the transformed sequence name
+                let searchStartPos = 0;
+                originalSequenceFields.forEach(part => {
+                    if (!part.isDelimiter) {
+                        const regex = state.sequenceRegexMap.get(part.fieldIndex) || '(.*)';
+                        const transformed = applyRegexTransform(part.text, regex);
+                        
+                        if (transformed && transformed !== '') {
+                            if (transformed.includes(newFieldDelim)) {
+                                // This field was split - map all new field indices to the original field index
+                                const subParts = transformed.split(newFieldDelim);
+                                // Find the position of the first part in the transformed sequence name
+                                const firstPart = subParts[0];
+                                const firstPartPos = transformedSequenceName.indexOf(firstPart, searchStartPos);
+                                if (firstPartPos >= 0) {
+                                    // Find which field in the re-parsed structure contains this position
+                                    const fieldAtPos = transformedSequenceFields.find(fp => 
+                                        !fp.isDelimiter && fp.startPos <= firstPartPos && fp.endPos > firstPartPos
+                                    );
+                                    if (fieldAtPos) {
+                                        const startFieldIdx = fieldAtPos.fieldIndex;
+                                        for (let i = 0; i < subParts.length; i++) {
+                                            newToOriginalSequenceFieldMap.set(startFieldIdx + i, part.fieldIndex);
+                                        }
+                                    }
+                                    searchStartPos = firstPartPos + transformed.length;
+                                }
+                            } else {
+                                // Normal field - find which new field index corresponds to it
+                                const fieldPos = transformedSequenceName.indexOf(transformed, searchStartPos);
+                                if (fieldPos >= 0) {
+                                    const fieldAtPos = transformedSequenceFields.find(fp => 
+                                        !fp.isDelimiter && fp.startPos <= fieldPos && fp.endPos > fieldPos
+                                    );
+                                    if (fieldAtPos) {
+                                        newToOriginalSequenceFieldMap.set(fieldAtPos.fieldIndex, part.fieldIndex);
+                                    }
+                                    searchStartPos = fieldPos + transformed.length;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+    
+    // Process all original sequence fields in order
+    if (state.rawSequences.length > 0) {
+        let exampleSeqIndex = state.skipSequences || 0;
+        if (exampleSeqIndex >= state.rawSequences.length) {
+            exampleSeqIndex = Math.max(0, state.rawSequences.length - 1);
+        }
+        
+        if (exampleSeqIndex >= 0 && exampleSeqIndex < state.rawSequences.length) {
+            const exampleSeqName = state.rawSequences[exampleSeqIndex].name || '';
+            const originalSequenceFields = parseFields(exampleSeqName, fieldDelim, subfieldDelim);
+            const sortedOriginalIndices = Array.from(new Set(originalSequenceFields
+                .filter(p => !p.isDelimiter && p.fieldIndex !== undefined)
+                .map(p => p.fieldIndex)))
+                .sort((a, b) => a - b);
+            
+            sortedOriginalIndices.forEach(originalFieldIdx => {
+                const color = FIELD_COLORS[originalFieldIdx % FIELD_COLORS.length];
+                
+                // Check if this original field was split
+                const splitData = originalSequenceFieldToNewFields.get(originalFieldIdx);
+                if (splitData) {
+                    // Field was split - match each part
+                    // Use NEW delimiter for splitting since that's what was used when joining
+                    const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+                    const subParts = splitData.transformedValue.split(newFieldDelim);
+                    const allMatches = [];
+                    subParts.forEach((subPart, partIdx) => {
+                        const matches = matchSequenceFieldToStandardSpec(subPart, originalFieldIdx, transformedSequenceFields);
+                        if (allMatches.length < subParts.length) {
+                            for (const m of matches) {
+                                // Allow optional fields to be matched multiple times
+                                if (!allMatches.includes(m) && (isOptionalField(m) || !usedSequenceFields.has(m))) {
+                                    allMatches.push(m);
+                                    break;
+                                }
+                            }
+                        }
+                    });
+                    originalSequenceFieldMap.set(originalFieldIdx, {
+                        color: color,
+                        matches: allMatches.length > 0 ? allMatches : null
+                    });
+                    // Only mark non-optional fields as used
+                    allMatches.forEach(m => {
+                        if (!isOptionalField(m)) {
+                            usedSequenceFields.add(m);
+                        }
+                    });
+                } else {
+                    // Normal field - match based on transformed value BEFORE amalgamation
+                    // Get the transformed value for this original field directly
+                    const originalFieldParts = originalSequenceFields.filter(p => !p.isDelimiter && p.fieldIndex === originalFieldIdx);
+                    if (originalFieldParts.length > 0) {
+                        const regex = state.sequenceRegexMap.get(originalFieldIdx) || '(.*)';
+                        const transformed = applyRegexTransform(originalFieldParts[0].text, regex);
+                        
+                        if (transformed === '') {
+                            // Field was removed
+                            originalSequenceFieldMap.set(originalFieldIdx, {
+                                color: color,
+                                matches: 'deleted'
+                            });
+                        } else {
+                            // Match the transformed value (before amalgamation) directly
+                            // This ensures we can match optional fields even after they're amalgamated
+                            const allMatches = matchSequenceFieldToStandardSpec(transformed, originalFieldIdx, []);
+                            // Allow optional fields to be matched multiple times
+                            const availableMatches = allMatches.filter(m => isOptionalField(m) || !usedSequenceFields.has(m));
+                            const firstMatch = availableMatches.length > 0 ? availableMatches[0] : null;
+                            originalSequenceFieldMap.set(originalFieldIdx, {
+                                color: color,
+                                matches: firstMatch
+                            });
+                            // Only mark non-optional fields as used
+                            if (firstMatch && !isOptionalField(firstMatch)) {
+                                usedSequenceFields.add(firstMatch);
+                            }
+                        }
+                    } else {
+                        originalSequenceFieldMap.set(originalFieldIdx, {
+                            color: color,
+                            matches: null
+                        });
+                    }
+                }
+            });
+        }
+    }
+    
+    let sequenceHtml = '';
+    if (originalSequenceFieldMap.size > 0) {
+        const sortedOriginalIndices = Array.from(originalSequenceFieldMap.keys()).sort((a, b) => a - b);
+        sortedOriginalIndices.forEach(originalFieldIdx => {
+            const fieldData = originalSequenceFieldMap.get(originalFieldIdx);
+            const match = fieldData.matches;
+            // match can be a string (single match) or array (multiple matches from split field)
+            const matchText = Array.isArray(match) ? (match.length > 0 ? match.join('+') : '?') : (match || '?');
+            const regexKey = `sequence-${originalFieldIdx}`;
+            const currentRegex = state.sequenceRegexMap.get(originalFieldIdx) || '(.*)';
+            sequenceHtml += `<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <div style="width: 16px; height: 16px; background: ${fieldData.color}; border: 1px solid #d1d5db; border-radius: 3px; flex-shrink: 0;"></div>
+                <span style="color: #374151; flex: 1;">${originalFieldIdx + 1}: ${matchText}</span>
+                <input type="text" id="regex-${regexKey}" value="${currentRegex}" style="width: 80px; padding: 2px 4px; border: 1px solid #d1d5db; border-radius: 3px; font-size: 11px; font-family: 'Courier New', monospace;" placeholder="(.*)">
+            </div>`;
+        });
+    } else {
+        sequenceHtml = '';
+    }
+    dom.legendSequencesContent.innerHTML = sequenceHtml;
+    
+    // Store regex values from inputs (but don't apply yet - wait for Apply button)
+    if (originalSequenceFieldMap.size > 0) {
+        const sortedOriginalIndices = Array.from(originalSequenceFieldMap.keys()).sort((a, b) => a - b);
+        sortedOriginalIndices.forEach(originalFieldIdx => {
+            const regexKey = `sequence-${originalFieldIdx}`;
+            const input = document.getElementById(`regex-${regexKey}`);
+            if (input) {
+                // Just store the value as user types, but don't apply transformations
+                input.addEventListener('input', (e) => {
+                    const regex = e.target.value || '(.*)';
+                    state.sequenceRegexMap.set(originalFieldIdx, regex);
+                });
+            }
+        });
+    }
+    
+    // Show/hide sections based on content
+    const filenameSection = document.getElementById('legend-filename-section');
+    const sequencesSection = document.getElementById('legend-sequences-section');
+    if (filenameSection) {
+        filenameSection.style.display = originalFilenameFieldMap.size > 0 ? 'block' : 'none';
+    }
+    if (sequencesSection) {
+        sequencesSection.style.display = originalSequenceFieldMap.size > 0 ? 'block' : 'none';
+    }
+    
+    // Show/hide popup based on whether there's content
+    if (originalFilenameFieldMap.size === 0 && originalSequenceFieldMap.size === 0) {
+        if (dom.fieldLegendPopup) {
+            dom.fieldLegendPopup.style.display = 'none';
+        }
+    } else {
+        if (dom.fieldLegendPopup) {
+            dom.fieldLegendPopup.style.display = 'block';
+        }
+    }
+}
+
+function toggleLegend() {
+    if (!dom.fieldLegendPopup) return;
+    const isVisible = dom.fieldLegendPopup.style.display !== 'none';
+    dom.fieldLegendPopup.style.display = isVisible ? 'none' : 'block';
+    if (!isVisible) {
+        updateLegend();
+    }
+}
+
+function getFieldColor(fieldIndex, subfieldIndex) {
+    // Get color for a field, with shading for subfields
+    const baseColor = FIELD_COLORS[fieldIndex % FIELD_COLORS.length];
+    
+    if (subfieldIndex !== null && subfieldIndex !== undefined && subfieldIndex > 0) {
+        // Return shaded version for subfields
+        // Convert hex to RGB, lighten it, convert back
+        const hex = baseColor.replace('#', '');
+        const r = parseInt(hex.substr(0, 2), 16);
+        const g = parseInt(hex.substr(2, 2), 16);
+        const b = parseInt(hex.substr(4, 2), 16);
+        
+        // Lighten by 20%
+        const lightR = Math.min(255, Math.floor(r + (255 - r) * 0.2));
+        const lightG = Math.min(255, Math.floor(g + (255 - g) * 0.2));
+        const lightB = Math.min(255, Math.floor(b + (255 - b) * 0.2));
+        
+        return `rgb(${lightR}, ${lightG}, ${lightB})`;
+    }
+    
+    return baseColor;
+}
+
+// --- Render ---
+function render() {
+    if(!state.viewSequences.length) {
+        ctxSeq.fillStyle = '#ffffff';
+        ctxSeq.fillRect(0, 0, dom.cvsSeq.width, dom.cvsSeq.height);
+        ctxNames.fillStyle = '#ffffff';
+        ctxNames.fillRect(0, 0, dom.cvsNames.width, dom.cvsNames.height);
+        ctxRuler.fillStyle = '#f3f4f6';
+        ctxRuler.fillRect(0, 0, dom.cvsRuler.width, dom.cvsRuler.height);
+        
+        // Draw watermark if no file loaded
+        if (!state.currentFileName) {
+            ctxSeq.save();
+            ctxSeq.fillStyle = 'rgba(0, 0, 0, 0.1)';
+            ctxSeq.textAlign = 'center';
+            ctxSeq.textBaseline = 'middle';
+            const centerX = dom.cvsSeq.width / 2;
+            const centerY = dom.cvsSeq.height / 2;
+            
+            // Draw three lines of text, stacked and centered
+            ctxSeq.font = 'bold 72px Arial';
+            const lineHeight = 90; // Spacing between lines
+            const startY = centerY - lineHeight; // Start above center
+            
+            ctxSeq.fillText('fasta', centerX, startY);
+            ctxSeq.fillText('COMPLIANCE', centerX, startY + lineHeight);
+            ctxSeq.font = 'bold 48px Arial'; // Smaller font for the group name
+            ctxSeq.fillText('HIVDiversity Group', centerX, startY + (lineHeight * 2));
+            
+            ctxSeq.restore();
+        }
+        return;
+    }
+
+    const scrollLeft = dom.areaSeq.scrollLeft;
+    const scrollTop = dom.areaSeq.scrollTop;
+    const vW = dom.cvsSeq.width;
+    const vH = dom.cvsSeq.height;
+
+    const startRow = Math.max(0, Math.floor(scrollTop / CONFIG.rowHeight) - 1);
+    const endRow = Math.min(state.viewSequences.length, Math.ceil((scrollTop + vH) / CONFIG.rowHeight) + 1);
+    const startCol = Math.max(0, Math.floor(scrollLeft / CONFIG.charWidth) - 1);
+    const endCol = Math.min(state.maxLength, Math.ceil((scrollLeft + vW) / CONFIG.charWidth) + 1);
+
+    // Ruler
+    ctxRuler.fillStyle = '#f3f4f6';
+    ctxRuler.fillRect(0, 0, dom.cvsRuler.width, dom.cvsRuler.height);
+    ctxRuler.font = CONFIG.labelFont;
+    ctxRuler.textBaseline = 'bottom';
+    ctxRuler.textAlign = 'center';
+    ctxRuler.fillStyle = '#374151';
+    
+    for(let c = startCol; c < endCol; c++) {
+        // Show ticks at positions 1, 11, 21, etc. (when (c+1) % 10 === 1, or equivalently c % 10 === 0)
+        if(c % 10 === 0) {
+            // Center of the column
+            const x = (c * CONFIG.charWidth) + (CONFIG.charWidth / 2) - scrollLeft;
+            // Position number (1-indexed): c+1
+            const position = c + 1;
+            // Draw tick mark centered in column
+            ctxRuler.beginPath();
+            ctxRuler.moveTo(x, 0);
+            ctxRuler.lineTo(x, 10);
+            ctxRuler.strokeStyle = '#6b7280';
+            ctxRuler.stroke();
+            // Place number below the tick mark
+            ctxRuler.fillText(position.toString(), x, dom.cvsRuler.height - 2);
+        }
+    }
+
+    // Names
+    ctxNames.fillStyle = '#fff';
+    ctxNames.fillRect(0, 0, dom.cvsNames.width, dom.cvsNames.height);
+    ctxNames.font = CONFIG.labelFont;
+    ctxNames.textBaseline = 'middle';
+    ctxNames.textAlign = 'left';
+    
+    for(let r = startRow; r < endRow; r++) {
+        const seq = state.viewSequences[r];
+        if(!seq) continue;
+        
+        const y = (r * CONFIG.rowHeight) - scrollTop;
+        let bgColor = '#fff';
+        let textColor = '#000000';
+        
+        if(r === state.refIndex) {
+            bgColor = '#eff6ff';
+        } else if (state.sequenceGroups) {
+            const groupId = state.sequenceGroups.get(seq.name);
+            if (groupId !== undefined) {
+                bgColor = GROUP_LIGHT_BG[(groupId + 1) % GROUP_LIGHT_BG.length];
+                textColor = COLOR_PALETTE[(groupId + 1) % COLOR_PALETTE.length];
+            }
+        }
+        
+        // Draw background
+        ctxNames.fillStyle = bgColor;
+        ctxNames.fillRect(0, y, Math.max(dom.cvsNames.width, state.namesWidth), CONFIG.rowHeight);
+        
+        // Draw colored fields
+        const seqName = seq.name || '';
+        // Get current delimiter values from input boxes
+        const fieldDelim = dom.inpFieldDelimiter ? (dom.inpFieldDelimiter.value || '_') : state.fieldDelimiter;
+        const subfieldDelim = dom.inpSubfieldDelimiter ? (dom.inpSubfieldDelimiter.value || '-') : state.subfieldDelimiter;
+        const seqFields = parseFields(seqName, fieldDelim, subfieldDelim);
+        const textX = 8;
+        const textY = y + CONFIG.rowHeight / 2;
+        
+        ctxNames.textBaseline = 'middle';
+        ctxNames.textAlign = 'left';
+        ctxNames.font = CONFIG.labelFont;
+        
+        if (seqFields.length > 0) {
+            // Draw fields with proper text measurement (variable-width font)
+            let currentX = textX;
+            seqFields.forEach(part => {
+                if (part.isDelimiter) {
+                    // Draw delimiter in default color
+                    ctxNames.fillStyle = '#000000';
+                    ctxNames.fillText(part.text, currentX, textY);
+                    // Measure and advance position
+                    const metrics = ctxNames.measureText(part.text);
+                    currentX += metrics.width;
+                } else {
+                    // Draw field/subfield with color background
+                    const fieldColor = getFieldColor(part.fieldIndex, part.subfieldIndex);
+                    const textMetrics = ctxNames.measureText(part.text);
+                    
+                    // Draw background rectangle
+                    ctxNames.fillStyle = fieldColor;
+                    ctxNames.fillRect(currentX - 2, y + 2, textMetrics.width + 4, CONFIG.rowHeight - 4);
+                    
+                    // Draw text
+                    ctxNames.fillStyle = '#000000';
+                    ctxNames.fillText(part.text, currentX, textY);
+                    
+                    // Advance position
+                    currentX += textMetrics.width;
+                }
+            });
+        } else {
+            // If no fields parsed, draw normally
+            ctxNames.fillStyle = '#000000';
+            ctxNames.fillText(seqName, textX, textY);
+        }
+    }
+    
+    // Render transformed names in new panel with same color scheme
+    if (ctxNamesNew && dom.cvsNamesNew) {
+        ctxNamesNew.fillStyle = '#fff';
+        ctxNamesNew.fillRect(0, 0, dom.cvsNamesNew.width, dom.cvsNamesNew.height);
+        ctxNamesNew.font = CONFIG.labelFont;
+        ctxNamesNew.textBaseline = 'middle';
+        ctxNamesNew.textAlign = 'left';
+        
+        for(let r = startRow; r < endRow; r++) {
+            const seq = state.viewSequences[r];
+            if(!seq) continue;
+            
+            const y = (r * CONFIG.rowHeight) - scrollTop;
+            let bgColor = '#fff';
+            let textColor = '#000000';
+            
+            if(r === state.refIndex) {
+                bgColor = '#eff6ff';
+            } else if (state.sequenceGroups) {
+                const groupId = state.sequenceGroups.get(seq.name);
+                if (groupId !== undefined) {
+                    bgColor = GROUP_LIGHT_BG[(groupId + 1) % GROUP_LIGHT_BG.length];
+                    textColor = COLOR_PALETTE[(groupId + 1) % COLOR_PALETTE.length];
+                }
+            }
+            
+            // Draw background
+            ctxNamesNew.fillStyle = bgColor;
+            ctxNamesNew.fillRect(0, y, Math.max(dom.cvsNamesNew.width, state.namesWidth), CONFIG.rowHeight);
+            
+            // Transform sequence name and parse fields for coloring
+            // Pass sequence index to skip header sequences
+            const transformedName = transformSequenceName(seq.name || '', r);
+            // Use NEW delimiters for parsing since transformed name uses new delimiters
+            const newFieldDelim = dom.inpNewFieldDelimiter ? (dom.inpNewFieldDelimiter.value || '_') : state.newFieldDelimiter;
+            const newSubfieldDelim = dom.inpNewSubfieldDelimiter ? (dom.inpNewSubfieldDelimiter.value || '-') : state.newSubfieldDelimiter;
+            const transformedFields = parseFields(transformedName, newFieldDelim, newSubfieldDelim);
+            const textX = 8;
+            const textY = y + CONFIG.rowHeight / 2;
+            
+            ctxNamesNew.textBaseline = 'middle';
+            ctxNamesNew.textAlign = 'left';
+            ctxNamesNew.font = CONFIG.labelFont;
+            
+            if (transformedFields.length > 0) {
+                // Filter out empty fields and their adjacent delimiters before rendering
+                const filteredFields = [];
+                transformedFields.forEach((part, idx) => {
+                    if (part.isDelimiter) {
+                        // Check if adjacent fields are empty
+                        const prevField = idx > 0 ? transformedFields[idx - 1] : null;
+                        const nextField = idx < transformedFields.length - 1 ? transformedFields[idx + 1] : null;
+                        const prevIsEmpty = prevField && !prevField.isDelimiter && (!prevField.text || prevField.text === '');
+                        const nextIsEmpty = nextField && !nextField.isDelimiter && (!nextField.text || nextField.text === '');
+                        
+                        // Only include delimiter if neither adjacent field is empty
+                        if (!prevIsEmpty && !nextIsEmpty) {
+                            filteredFields.push(part);
+                        }
+                    } else {
+                        // Only include non-empty fields
+                        if (part.text && part.text !== '') {
+                            filteredFields.push(part);
+                        }
+                    }
+                });
+                
+                if (filteredFields.length > 0) {
+                    // Draw fields with proper text measurement and color scheme
+                    let currentX = textX;
+                    filteredFields.forEach(part => {
+                        if (part.isDelimiter) {
+                            // Draw delimiter in default color
+                            ctxNamesNew.fillStyle = '#000000';
+                            ctxNamesNew.fillText(part.text, currentX, textY);
+                            // Measure and advance position
+                            const metrics = ctxNamesNew.measureText(part.text);
+                            currentX += metrics.width;
+                        } else {
+                            // Draw field/subfield with color background (same as original)
+                            const fieldColor = getFieldColor(part.fieldIndex, part.subfieldIndex);
+                            const textMetrics = ctxNamesNew.measureText(part.text);
+                            
+                            // Draw background rectangle
+                            ctxNamesNew.fillStyle = fieldColor;
+                            ctxNamesNew.fillRect(currentX - 2, y + 2, textMetrics.width + 4, CONFIG.rowHeight - 4);
+                            
+                            // Draw text
+                            ctxNamesNew.fillStyle = '#000000';
+                            ctxNamesNew.fillText(part.text, currentX, textY);
+                            
+                            // Advance position
+                            currentX += textMetrics.width;
+                        }
+                    });
+                } else {
+                    // All fields were empty, draw nothing
+                    // (leave blank)
+                }
+            } else {
+                // If no fields parsed, draw normally
+                ctxNamesNew.fillStyle = '#000000';
+                ctxNamesNew.fillText(transformedName, textX, textY);
+            }
+        }
+    }
+
+    // Sequence
+    ctxSeq.fillStyle = '#ffffff';
+    ctxSeq.fillRect(0, 0, vW, vH);
+    ctxSeq.font = CONFIG.font;
+    ctxSeq.textBaseline = 'middle';
+    ctxSeq.textAlign = 'center';
+    const colors = state.mode === 'NT' ? CONFIG.colors.NT : CONFIG.colors.AA;
+    
+    let highlightSeq = null;
+    if (state.highlightMatches === 'reference') {
+        if (state.refIndex >= 0 && state.viewSequences[state.refIndex]) {
+            highlightSeq = state.viewSequences[state.refIndex].seq;
+        }
+    }
+
+    for(let r = startRow; r < endRow; r++) {
+        const seq = state.viewSequences[r];
+        if(!seq) continue;
+        const y = (r * CONFIG.rowHeight) - scrollTop;
+        
+        for(let c = startCol; c < endCol; c++) {
+            if(c >= seq.seq.length) break;
+            
+            const char = seq.seq[c];
+            const x = (c * CONFIG.charWidth) - scrollLeft;
+            let fillColor;
+            
+            if (char === '-') {
+                fillColor = '#e5e7eb';
+            } else {
+                fillColor = colors[char] || colors['default'];
+                
+                if(state.highlightMatches && highlightSeq) {
+                    const highlightChar = (c < highlightSeq.length) ? highlightSeq[c] : '-';
+                    if(highlightChar !== '-') {
+                        if(char === highlightChar) {
+                            fillColor = CONFIG.highlightMatchColor;
+                        }
+                    }
+                }
+            }
+
+            ctxSeq.fillStyle = fillColor;
+            ctxSeq.fillRect(x, y, CONFIG.charWidth, CONFIG.rowHeight);
+            if(char !== '-') {
+                ctxSeq.fillStyle = '#000';
+                ctxSeq.fillText(char, x + CONFIG.charWidth/2, y + CONFIG.rowHeight/2);
+            }
+        }
+    }
+
+    // Selection
+    if(state.selection) {
+        const { r1, r2, c1, c2 } = state.selection;
+        const visC2 = Math.min(c2, state.maxLength + 20);
+        const sx = (c1 * CONFIG.charWidth) - scrollLeft;
+        const sy = (r1 * CONFIG.rowHeight) - scrollTop;
+        const w = Math.max(4, (visC2 - c1 + 1) * CONFIG.charWidth);
+        const h = (r2 - r1 + 1) * CONFIG.rowHeight;
+        
+        ctxSeq.fillStyle = 'rgba(37, 99, 235, 0.2)';
+        ctxSeq.fillRect(sx, sy, w, h);
+        ctxSeq.strokeStyle = 'rgba(37, 99, 235, 0.8)';
+        ctxSeq.lineWidth = 1;
+        ctxSeq.strokeRect(sx, sy, w, h);
+    }
+}
+
+init();
+
+</script>
+</body>
+</html>
+
